@@ -165,8 +165,8 @@ void AvailableFactsAnalysis::Analyze(unsigned int Limit) {
          }
        }
 
-     if (++Iteration > (2 * Blocks.size()) + Limit)
-       break;
+     //////if (++Iteration > (2 * Blocks.size()) + Limit)
+       //break;
    }
 
    for (auto B : Blocks)
