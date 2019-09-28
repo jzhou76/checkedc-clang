@@ -24,7 +24,7 @@
 
 #include <string>
 
-#define DEBUG_DUMP true
+#define DEBUG_DUMP false
 #define BOUNDS_CHECK_WITH_Z3 true
 #define TEST_PROGRAM_STATE false
 #define USE_PROGRAM_STATE false
@@ -106,6 +106,7 @@ void SimpleBoundsChecker::checkLocation(SVal l, bool isLoad, const Stmt* LoadS,
     ProgramStateRef state = C.getState();
     ProgramStateManager &SM = state->getStateManager();
     SValBuilder &svalBuilder = SM.getSValBuilder();
+    SymbolManager& symMgr = svalBuilder.getSymbolManager();
     ASTContext &Ctx = svalBuilder.getContext();
     
 
@@ -131,14 +132,15 @@ void SimpleBoundsChecker::checkLocation(SVal l, bool isLoad, const Stmt* LoadS,
 
     // 2. Read the Symbolic expr of the index
     //
-    Loc arrLoc = svalBuilder.makeLoc(ER->getBaseRegion());
-    SVal arrLocSVal = state->getSVal(arrLoc);
+    // This is Bull crap, remove it
+    // Loc arrLoc = svalBuilder.makeLoc(ER->getBaseRegion());
+    // SVal arrLocSVal = state->getSVal(arrLoc);
 
-    SymbolRef AR =  arrLocSVal.getAsSymbolicExpression();
-    if (!AR) {
-        llvm::errs() << "AR is NULL\n";
-        return;
-    }
+    // SymbolRef AR =  arrLocSVal.getAsSymbolicExpression();
+    // if (!AR) {
+    //     llvm::errs() << "AR is NULL\n";
+    //     return;
+    // }
 
 #if DEBUG_DUMP
     llvm::errs() << "\nArray location sym expr:\n";
@@ -173,41 +175,84 @@ void SimpleBoundsChecker::checkLocation(SVal l, bool isLoad, const Stmt* LoadS,
     //SymbolRef BoundsSym;
     if (!FD) {
         llvm::errs() << "FD in checkLoc is NULL!\n";
+        return;
+    }
+    FD = FD->getCanonicalDecl();
+    const ParmVarDecl* arg = FD->getParamDecl(0);
+    const Expr* BE = arg->getBoundsExpr();
+    if ( BE ) BE->dumpColor(); else {llvm::errs() << "BoundsExpr of first arg is NULL!\n";}
+    SVal BESymVal = state->getSVal(BE, LCtx); // <-- This is the normal way one should read the symbolic values associated with expression in the 'environment'
+    SymbolRef BER = BESymVal.getAsSymbol();
+    SymbolRef symBE;
+
+    if (!BER) {
+        llvm::errs() << "BER is NULL! Try a conjured symbol:\n"; // <-- This means that this expression is not processed by the symbolic engine
+
+//        const SymbolConjured* SC = svalBuilder.conjureSymbol(BE, LCtx, 0);  // <- This triggers an assertion as the expr type is either void or null?!
+        const SymbolConjured* SC = symMgr.conjureSymbol(dyn_cast<Stmt>(BE), LCtx, Ctx.IntTy, 0);
+        if (!SC) {
+            llvm::errs() << "Conjured symbol is also NULL!\n";
+            return;
+        }
+        const SymExpr* parSE = dyn_cast<SymExpr>(SC);
+        if (!parSE) {
+            llvm::errs() << "Cast failed!\n";
+            return;
+        }
+        symBE = parSE;
     }
     else {
-        FD = FD->getCanonicalDecl();
-        const ParmVarDecl* arg = FD->getParamDecl(0);
-        //checkBoundsInfo(arg, "checkLoc::argument", Ctx);
-        const CountBoundsExpr* CBE = dyn_cast<CountBoundsExpr>(arg->getBoundsExpr());
-        CBE->dumpColor();
-
-        //SVal argBoundSVal = C.getSVal(CBE->getCountExpr());
-        //BoundsSym = argBoundSVal.getAsSymbolicExpression();
-
-        /* DEBUG START */
-        /* These are debug codes, attempting to get to the ParmVar inside the CountBoundsExpr */
-        const DeclRefExpr* t = dyn_cast<DeclRefExpr>(arg->getBoundsExpr());
-        if (!t) {llvm::errs() << "t is NULL!"; }
-        const ImplicitCastExpr* ICE = dyn_cast<ImplicitCastExpr>(CBE);
-        if (!ICE) {
-            llvm::errs() << "ICE is NULL!\n";
-            const DeclRefExpr* DRE = dyn_cast<DeclRefExpr>(CBE);
-            if (!DRE)
-                llvm::errs() << "DRE is NULL!\n";
-            else
-            {
-                DRE->dumpColor();
-                llvm::errs() << DRE->getDecl()->getName() << "\n";
-            }
-        }
-        else {
-            const DeclRefExpr* DRE = dyn_cast<DeclRefExpr>(ICE->getSubExpr());
-            llvm::errs() << "-- DRE --\n";
-            DRE->dumpColor();
-            llvm::errs() << DRE->getDecl()->getName() << "\n";
-        }
-        /* DEBUG END */
+        symBE = BER;
     }
+    
+    symBE->dump(); llvm::errs() << "\n";
+    //return;
+
+    
+    //const SymbolConjured* conjSym = symMgr.conjureSymbol(BE, LCtx, 1);
+
+
+    // //checkBoundsInfo(arg, "checkLoc::argument", Ctx);
+    // const CountBoundsExpr* CBE = dyn_cast<CountBoundsExpr>(arg->getBoundsExpr());
+    // CBE->dumpColor();
+    // llvm::errs() << "CBE children:\n";
+    // for( auto I = CBE->child_begin(); I != CBE->child_end(); I++ ) {
+    //     const Stmt* E = *I;
+    //     if (!E) E->dumpColor(); else llvm::errs() << "--";
+    //     llvm::errs() << "\n";
+    // }
+
+    // const Expr* E = arg->getBoundsExpr();
+    // llvm::errs() << "After ignoring imp cast:\n";
+    // if (!E) {E->dumpColor();} else {llvm::errs() << "returned pointer is NULL!\n";}
+
+    // SVal argBoundSVal = C.getSVal(CBE->getCountExpr());
+    // argBoundSVal.dump(); llvm::errs() << "\n";
+    // //BoundsSym = argBoundSVal.getAsSymbolicExpression();
+
+    // /* DEBUG START */
+    // /* These are debug codes, attempting to get to the ParmVar inside the CountBoundsExpr */
+    // const DeclRefExpr* t = dyn_cast<DeclRefExpr>(arg->getBoundsExpr());
+    // if (!t) {llvm::errs() << "t is NULL!\n"; }
+    // const ImplicitCastExpr* ICE = dyn_cast<ImplicitCastExpr>(CBE);
+    // if (!ICE) {
+    //     llvm::errs() << "ICE is NULL!\n";
+    //     const DeclRefExpr* DRE = dyn_cast<DeclRefExpr>(CBE);
+    //     if (!DRE)
+    //         llvm::errs() << "DRE is NULL!\n";
+    //     else
+    //     {
+    //         DRE->dumpColor();
+    //         llvm::errs() << DRE->getDecl()->getName() << "\n";
+    //     }
+    // }
+    // else {
+    //     const DeclRefExpr* DRE = dyn_cast<DeclRefExpr>(ICE->getSubExpr());
+    //     llvm::errs() << "-- DRE --\n";
+    //     DRE->dumpColor();
+    //     llvm::errs() << DRE->getDecl()->getName() << "\n";
+    // }
+    /* DEBUG END */
 #endif
 
 
@@ -217,18 +262,20 @@ void SimpleBoundsChecker::checkLocation(SVal l, bool isLoad, const Stmt* LoadS,
     // TODO: currently only expressions of count(n) is handled, generalize for bounds(LB, UB)
     //
     // SMT expression of the bounds expression
-    SMTExprRef BE = SMTConv::getExpr(solver, Ctx, AR);
+    SMTExprRef smtBE = SMTConv::getExpr(solver, Ctx, symBE); smtBE->print(llvm::errs()); llvm::errs()<<"\n";
     // SMT expression of the index
-    SMTExprRef idx = SMTConv::getExpr(solver, Ctx, Idx.getAsSymbol());
+    SMTExprRef smtIdx = SMTConv::getExpr(solver, Ctx, Idx.getAsSymbol()); smtIdx->print(llvm::errs()); llvm::errs()<<"\n";
     // SMT expression for (idx > UpperBound)
-    SMTExprRef overUB = solver->mkBVUgt(idx, BE);
+    SMTExprRef overUB = solver->mkBVUgt(smtIdx, smtBE); overUB->print(llvm::errs()); llvm::errs()<<"\n";
     // SMT expression for (idx < LowerBound)
-    SMTExprRef underLB = solver->mkBVUlt(idx, solver->mkBitvector(llvm::APSInt(32), 32));
+    SMTExprRef underLB = solver->mkBVUlt(smtIdx, solver->mkBitvector(llvm::APSInt(32), 32)); underLB->print(llvm::errs()); llvm::errs()<<"\n";
     
     // the final SMT expression
     SMTExprRef constraint = solver->mkOr(underLB, overUB); constraint->print(llvm::errs()); llvm::errs() << "\n";
 
+    
     solver->addConstraint(constraint);
+
 
     // 4. Solve the SMT formula for a bad input using Z3
     Optional<bool> isSat = solver->check();
