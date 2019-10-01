@@ -21,8 +21,11 @@
 #include "clang/StaticAnalyzer/Core/PathSensitive/SMTConv.h"
 #include "clang/StaticAnalyzer/Core/PathSensitive/SMTSolver.h"
 
+#include "clang/AST/ASTConsumer.h"
+#include "clang/AST/RecursiveASTVisitor.h"
 
 #include <string>
+
 
 #define DEBUG_DUMP false
 #define BOUNDS_CHECK_WITH_Z3 true
@@ -31,6 +34,33 @@
 
 using namespace clang;
 using namespace ento;
+
+class SymExprGenVisitor : public RecursiveASTVisitor<SymExprGenVisitor> {
+    public:
+        explicit SymExprGenVisitor(ASTContext *Context)
+            : Context(Context) {}
+
+        bool VisitVarDecl(VarDecl *Declaration) {
+            return true;
+        }
+
+    private:
+        ASTContext *Context;
+};
+
+class SymExprGenConsumer : public ASTConsumer {
+    public:
+        explicit SymExprGenConsumer(ASTContext *Context)
+            : Visitor(Context) {}
+
+        virtual void HandleTranslationUnit(ASTContext &Context) {
+            Visitor.TraverseDecl(Context.getTranslationUnitDecl());
+        }
+    private:
+        SymExprGenVisitor Visitor;
+};
+
+
 
 namespace {
 #if TEST_PROGRAM_STATE
@@ -110,6 +140,7 @@ void SimpleBoundsChecker::checkLocation(SVal l, bool isLoad, const Stmt* LoadS,
     ASTContext &Ctx = svalBuilder.getContext();
     
 
+    state->getEnvironment().print(llvm::errs(), "\nCheckLocation:: ", "\n", Ctx);
 
     // Get the index of the accessed element.
     DefinedOrUnknownSVal Idx = ER->getIndex().castAs<DefinedOrUnknownSVal>();
@@ -132,15 +163,6 @@ void SimpleBoundsChecker::checkLocation(SVal l, bool isLoad, const Stmt* LoadS,
 
     // 2. Read the Symbolic expr of the index
     //
-    // This is Bull crap, remove it
-    // Loc arrLoc = svalBuilder.makeLoc(ER->getBaseRegion());
-    // SVal arrLocSVal = state->getSVal(arrLoc);
-
-    // SymbolRef AR =  arrLocSVal.getAsSymbolicExpression();
-    // if (!AR) {
-    //     llvm::errs() << "AR is NULL\n";
-    //     return;
-    // }
 
 #if DEBUG_DUMP
     llvm::errs() << "\nArray location sym expr:\n";
@@ -170,24 +192,38 @@ void SimpleBoundsChecker::checkLocation(SVal l, bool isLoad, const Stmt* LoadS,
 #endif
 
 #if !USE_PROGRAM_STATE
+//    ASTConsumer * symGen = std::unique_ptr<ASTConsumer>(new SymGenExprConsumer(Ctx));
+
+
     const LocationContext *LCtx = C.getLocationContext();
     const FunctionDecl *FD = dyn_cast_or_null<FunctionDecl>(LCtx->getDecl());
-    //SymbolRef BoundsSym;
     if (!FD) {
         llvm::errs() << "FD in checkLoc is NULL!\n";
         return;
     }
     FD = FD->getCanonicalDecl();
-    const ParmVarDecl* arg = FD->getParamDecl(0);
-    const Expr* BE = arg->getBoundsExpr();
+
+    SymbolRef symBE;
+
+    const ParmVarDecl* arg0 = FD->getParamDecl(0);
+    const Expr* BE = arg0->getBoundsExpr();
     if ( BE ) BE->dumpColor(); else {llvm::errs() << "BoundsExpr of first arg is NULL!\n";}
     SVal BESymVal = state->getSVal(BE, LCtx); // <-- This is the normal way one should read the symbolic values associated with expression in the 'environment'
     SymbolRef BER = BESymVal.getAsSymbol();
-    SymbolRef symBE;
+
+    const ParmVarDecl* arg1 = FD->getParamDecl(1);
+    //SVal arg1SVal = state->getSVal(state->getLValue(arg1, LCtx));
+    SVal arg1SVal = state->getSVal(state->getRegion(arg1, LCtx), arg1->getType());
 
     if (!BER) {
-        llvm::errs() << "BER is NULL! Try a conjured symbol:\n"; // <-- This means that this expression is not processed by the symbolic engine
+        llvm::errs() << "BER is NULL (BoundsExpr SymbolRef is not in the ENV)!\n"; // <-- This means that this expression is not processed by the symbolic engine
 
+    /** DEBUG (Symbol conjuring)
+     * This is how we can conjure a symbol to encapsulate any given expression (But not knowing anything about the expression itself)
+     * **/
+    #define CONJUR_SYMBOL false
+    #if CONJUR_SYMBOL
+        llvm::errs() << "Try a conjured symbol:\n";
 //        const SymbolConjured* SC = svalBuilder.conjureSymbol(BE, LCtx, 0);  // <- This triggers an assertion as the expr type is either void or null?!
         const SymbolConjured* SC = symMgr.conjureSymbol(dyn_cast<Stmt>(BE), LCtx, Ctx.IntTy, 0);
         if (!SC) {
@@ -200,6 +236,9 @@ void SimpleBoundsChecker::checkLocation(SVal l, bool isLoad, const Stmt* LoadS,
             return;
         }
         symBE = parSE;
+    #endif // CONJUR_SYMBOL
+
+        symBE = arg1SVal.getAsSymbol();
     }
     else {
         symBE = BER;
@@ -208,52 +247,54 @@ void SimpleBoundsChecker::checkLocation(SVal l, bool isLoad, const Stmt* LoadS,
     symBE->dump(); llvm::errs() << "\n";
     //return;
 
-    
-    //const SymbolConjured* conjSym = symMgr.conjureSymbol(BE, LCtx, 1);
 
 
-    // //checkBoundsInfo(arg, "checkLoc::argument", Ctx);
-    // const CountBoundsExpr* CBE = dyn_cast<CountBoundsExpr>(arg->getBoundsExpr());
-    // CBE->dumpColor();
-    // llvm::errs() << "CBE children:\n";
-    // for( auto I = CBE->child_begin(); I != CBE->child_end(); I++ ) {
-    //     const Stmt* E = *I;
-    //     if (!E) E->dumpColor(); else llvm::errs() << "--";
-    //     llvm::errs() << "\n";
-    // }
+    /** DEBUG (BoundsExpr manipulation)
+     *  Here we try to get the children info of the expression, and maybe the ParmVar inside the expression by dynamic casting
+     */
+    #define BOUNDSEXPR_MANIP false
+    #if BOUNDSEXPR_MANIP
+    const CountBoundsExpr* CBE = dyn_cast<CountBoundsExpr>(arg->getBoundsExpr());
+    CBE->dumpColor();
+    llvm::errs() << "CBE children:\n";
+    for( auto I = CBE->child_begin(); I != CBE->child_end(); I++ ) {
+        const Stmt* E = *I;
+        if (!E) E->dumpColor(); else llvm::errs() << "--";
+        llvm::errs() << "\n";
+    }
 
-    // const Expr* E = arg->getBoundsExpr();
-    // llvm::errs() << "After ignoring imp cast:\n";
-    // if (!E) {E->dumpColor();} else {llvm::errs() << "returned pointer is NULL!\n";}
+    const Expr* E = arg->getBoundsExpr();
+    llvm::errs() << "After ignoring imp cast:\n";
+    if (!E) {E->dumpColor();} else {llvm::errs() << "returned pointer is NULL!\n";}
 
-    // SVal argBoundSVal = C.getSVal(CBE->getCountExpr());
-    // argBoundSVal.dump(); llvm::errs() << "\n";
-    // //BoundsSym = argBoundSVal.getAsSymbolicExpression();
+    SVal argBoundSVal = C.getSVal(CBE->getCountExpr());
+    argBoundSVal.dump(); llvm::errs() << "\n";
+    //BoundsSym = argBoundSVal.getAsSymbolicExpression();
 
-    // /* DEBUG START */
-    // /* These are debug codes, attempting to get to the ParmVar inside the CountBoundsExpr */
-    // const DeclRefExpr* t = dyn_cast<DeclRefExpr>(arg->getBoundsExpr());
-    // if (!t) {llvm::errs() << "t is NULL!\n"; }
-    // const ImplicitCastExpr* ICE = dyn_cast<ImplicitCastExpr>(CBE);
-    // if (!ICE) {
-    //     llvm::errs() << "ICE is NULL!\n";
-    //     const DeclRefExpr* DRE = dyn_cast<DeclRefExpr>(CBE);
-    //     if (!DRE)
-    //         llvm::errs() << "DRE is NULL!\n";
-    //     else
-    //     {
-    //         DRE->dumpColor();
-    //         llvm::errs() << DRE->getDecl()->getName() << "\n";
-    //     }
-    // }
-    // else {
-    //     const DeclRefExpr* DRE = dyn_cast<DeclRefExpr>(ICE->getSubExpr());
-    //     llvm::errs() << "-- DRE --\n";
-    //     DRE->dumpColor();
-    //     llvm::errs() << DRE->getDecl()->getName() << "\n";
-    // }
-    /* DEBUG END */
-#endif
+    /* DEBUG START */
+    /* These are debug codes, attempting to get to the ParmVar inside the CountBoundsExpr */
+    const DeclRefExpr* t = dyn_cast<DeclRefExpr>(arg->getBoundsExpr());
+    if (!t) {llvm::errs() << "t is NULL!\n"; }
+    const ImplicitCastExpr* ICE = dyn_cast<ImplicitCastExpr>(CBE);
+    if (!ICE) {
+        llvm::errs() << "ICE is NULL!\n";
+        const DeclRefExpr* DRE = dyn_cast<DeclRefExpr>(CBE);
+        if (!DRE)
+            llvm::errs() << "DRE is NULL!\n";
+        else
+        {
+            DRE->dumpColor();
+            llvm::errs() << DRE->getDecl()->getName() << "\n";
+        }
+    }
+    else {
+        const DeclRefExpr* DRE = dyn_cast<DeclRefExpr>(ICE->getSubExpr());
+        llvm::errs() << "-- DRE --\n";
+        DRE->dumpColor();
+        llvm::errs() << DRE->getDecl()->getName() << "\n";
+    }
+    #endif // BOUNDSEXPR_MANIP
+#endif // !USE_PROGRAM_STATE
 
 
     // 3. Encode the expression as a SMT formula
@@ -262,13 +303,13 @@ void SimpleBoundsChecker::checkLocation(SVal l, bool isLoad, const Stmt* LoadS,
     // TODO: currently only expressions of count(n) is handled, generalize for bounds(LB, UB)
     //
     // SMT expression of the bounds expression
-    SMTExprRef smtBE = SMTConv::getExpr(solver, Ctx, symBE); smtBE->print(llvm::errs()); llvm::errs()<<"\n";
+    SMTExprRef smtBE = SMTConv::getExpr(solver, Ctx, symBE); //smtBE->print(llvm::errs()); llvm::errs()<<"\n";
     // SMT expression of the index
-    SMTExprRef smtIdx = SMTConv::getExpr(solver, Ctx, Idx.getAsSymbol()); smtIdx->print(llvm::errs()); llvm::errs()<<"\n";
+    SMTExprRef smtIdx = SMTConv::getExpr(solver, Ctx, Idx.getAsSymbol()); //smtIdx->print(llvm::errs()); llvm::errs()<<"\n";
     // SMT expression for (idx > UpperBound)
-    SMTExprRef overUB = solver->mkBVUgt(smtIdx, smtBE); overUB->print(llvm::errs()); llvm::errs()<<"\n";
+    SMTExprRef overUB = solver->mkBVUgt(smtIdx, smtBE); //overUB->print(llvm::errs()); llvm::errs()<<"\n";
     // SMT expression for (idx < LowerBound)
-    SMTExprRef underLB = solver->mkBVUlt(smtIdx, solver->mkBitvector(llvm::APSInt(32), 32)); underLB->print(llvm::errs()); llvm::errs()<<"\n";
+    SMTExprRef underLB = solver->mkBVUlt(smtIdx, solver->mkBitvector(llvm::APSInt(32), 32)); //underLB->print(llvm::errs()); llvm::errs()<<"\n";
     
     // the final SMT expression
     SMTExprRef constraint = solver->mkOr(underLB, overUB); constraint->print(llvm::errs()); llvm::errs() << "\n";
@@ -354,6 +395,8 @@ void SimpleBoundsChecker::checkBeginFunction(CheckerContext& C) const {
         return;
     
     FD = FD->getCanonicalDecl();
+    state->getEnvironment().print(llvm::errs(), "checkBegin::\n", "\n", Ctx);
+
 
     CheckedScopeSpecifier CSS = FD->getCheckedSpecifier();
     if ( CSS == CSS_Bounds || CSS == CSS_Memory ) {
@@ -385,6 +428,8 @@ void SimpleBoundsChecker::checkBeginFunction(CheckerContext& C) const {
         #endif
         return;
     }
+
+
 
 
 #if DEBUG_DUMP
