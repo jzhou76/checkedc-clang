@@ -23,6 +23,8 @@
 
 #include "clang/AST/ASTConsumer.h"
 #include "clang/AST/RecursiveASTVisitor.h"
+#include "clang/StaticAnalyzer/Core/PathSensitive/SValVisitor.h"
+
 
 #include <string>
 
@@ -93,6 +95,9 @@ namespace {
 
         void checkBoundsInfo(const DeclaratorDecl* decl, std::string label, ASTContext& Ctx) const;
 
+        SVal replaceSVal(ProgramStateRef state, SVal V, SVal from, SVal to) const;
+
+
     public:
         void checkLocation(SVal l, bool isLoad, const Stmt* S,
                             CheckerContext &C) const;
@@ -136,7 +141,7 @@ void SimpleBoundsChecker::checkLocation(SVal l, bool isLoad, const Stmt* LoadS,
     ProgramStateRef state = C.getState();
     ProgramStateManager &SM = state->getStateManager();
     SValBuilder &svalBuilder = SM.getSValBuilder();
-    SymbolManager& symMgr = svalBuilder.getSymbolManager();
+    //SymbolManager& symMgr = svalBuilder.getSymbolManager();
     ASTContext &Ctx = svalBuilder.getContext();
     
 
@@ -243,10 +248,36 @@ void SimpleBoundsChecker::checkLocation(SVal l, bool isLoad, const Stmt* LoadS,
     else {
         symBE = BER;
     }
-    
+    llvm::errs() << "symBE: ";
     symBE->dump(); llvm::errs() << "\n";
-    //return;
 
+    const SymExpr* symIdx = Idx.getAsSymbol();
+
+    //llvm::errs() << "BEGIN symbol iteration on Idx:\n";
+    SVal from;
+    bool fromIsSet = false;
+    for( SymExpr::symbol_iterator I = symIdx->symbol_begin(); I != symIdx->symbol_end(); ++I ) {
+        const SymExpr *SE = *I;
+        const SymbolData* SD = dyn_cast<SymbolData>(SE);
+        if (SD) { from = svalBuilder.makeSymbolVal(SD); fromIsSet = true; }
+//        SE->dump(); llvm::errs() << "\n";
+    }
+    //llvm::errs() << "END symbol iteration on Idx\n";
+
+    if ( fromIsSet ) {
+        SVal newIdx = replaceSVal(state, Idx, from, arg1SVal);
+        if (newIdx.getAsSymbol()) {
+            llvm::errs() << "newIdx: ";
+            newIdx.getAsSymbol()->dump(); llvm::errs() << "\n";
+            symIdx = newIdx.getAsSymbol();
+        }
+        else llvm::errs() << "empty newIdx!\n";
+
+    }
+    else {
+        llvm::errs() << "'from' is not set!\n";
+    }
+    
 
 
     /** DEBUG (BoundsExpr manipulation)
@@ -305,14 +336,19 @@ void SimpleBoundsChecker::checkLocation(SVal l, bool isLoad, const Stmt* LoadS,
     // SMT expression of the bounds expression
     SMTExprRef smtBE = SMTConv::getExpr(solver, Ctx, symBE); //smtBE->print(llvm::errs()); llvm::errs()<<"\n";
     // SMT expression of the index
-    SMTExprRef smtIdx = SMTConv::getExpr(solver, Ctx, Idx.getAsSymbol()); //smtIdx->print(llvm::errs()); llvm::errs()<<"\n";
+    SMTExprRef smtIdx = SMTConv::getExpr(solver, Ctx, symIdx); //smtIdx->print(llvm::errs()); llvm::errs()<<"\n";
     // SMT expression for (idx > UpperBound)
-    SMTExprRef overUB = solver->mkBVUgt(smtIdx, smtBE); //overUB->print(llvm::errs()); llvm::errs()<<"\n";
+    SMTExprRef overUB = solver->mkBVSgt(smtIdx, smtBE); //overUB->print(llvm::errs()); llvm::errs()<<"\n";
     // SMT expression for (idx < LowerBound)
-    SMTExprRef underLB = solver->mkBVUlt(smtIdx, solver->mkBitvector(llvm::APSInt(32), 32)); //underLB->print(llvm::errs()); llvm::errs()<<"\n";
+    SMTExprRef underLB = solver->mkBVSlt(smtIdx, solver->mkBitvector(llvm::APSInt(32), 32)); //underLB->print(llvm::errs()); llvm::errs()<<"\n";
+
+    // Forcing the 'n' in the bounds expression be > 0
+    SMTExprRef positiveBE = solver->mkBVSgt(smtBE, solver->mkBitvector(llvm::APSInt(32), 32));
+
+    SMTExprRef smtOOBounds = solver->mkOr(underLB, overUB);
     
     // the final SMT expression
-    SMTExprRef constraint = solver->mkOr(underLB, overUB); constraint->print(llvm::errs()); llvm::errs() << "\n";
+    SMTExprRef constraint = solver->mkAnd(positiveBE, smtOOBounds); constraint->print(llvm::errs()); llvm::errs() << "\n";
 
     
     solver->addConstraint(constraint);
@@ -470,6 +506,94 @@ void SimpleBoundsChecker::checkBeginFunction(CheckerContext& C) const {
     C.addTransition(state);
 #endif
 }
+
+
+SVal SimpleBoundsChecker::replaceSVal(ProgramStateRef state, SVal V, SVal from, SVal to) const {
+
+  class Replacer : public FullSValVisitor<Replacer, SVal> {
+    ProgramStateRef state;
+    //SValBuilder &SVB;
+    SVal from;
+    SVal to;
+
+    static bool isUnchanged(SymbolRef Sym, SVal Val) {
+      return Sym == Val.getAsSymbol();
+    }
+
+  public:
+    Replacer(ProgramStateRef _state, SVal _from, SVal _to)
+        : state(_state), from(_from), to(_to)//, SVB(state->getStateManager().getSValBuilder())
+        {
+            #if DEBUG_DUMP
+            llvm::errs() << "replacer is created!\n";
+            #endif
+        }
+
+    SVal VisitSymExpr(SymbolRef S) {
+        #if DEBUG_DUMP
+        llvm::errs() << "Visitor::SymExpr:: "; S->dump(); llvm::errs() << "\n";
+        #endif
+        if ( const BinarySymExpr* BSE = dyn_cast<BinarySymExpr>(S) ) {
+            BinaryOperator::Opcode op = BSE->getOpcode();
+
+            if (const SymIntExpr *SIE = dyn_cast<SymIntExpr>(BSE)) {
+                SVal left = Visit(SIE->getLHS());
+                return nonloc::SymbolVal(new SymIntExpr(left.getAsSymExpr(), op, SIE->getRHS(), SIE->getType()));
+            }
+
+            if (const IntSymExpr *ISE = dyn_cast<IntSymExpr>(BSE)) {
+                SVal right = Visit(ISE->getRHS());
+                return nonloc::SymbolVal(new IntSymExpr(ISE->getLHS(), op, right.getAsSymExpr(), ISE->getType()));
+            }
+
+            if (const SymSymExpr *SSE = dyn_cast<SymSymExpr>(BSE)) {
+                SVal left = Visit(SSE->getLHS());
+                SVal right = Visit(SSE->getRHS());
+                return nonloc::SymbolVal(new SymSymExpr(left.getAsSymExpr(), op, right.getAsSymExpr(), SSE->getType()));
+            }
+        }
+        return nonloc::SymbolVal(S);
+    }
+
+    SVal VisitMemRegion(const MemRegion *R) {
+        #if DEBUG_DUMP
+        llvm::errs() << "Visitor::MemRegion:: "; R->dump(); llvm::errs() << "\n";
+        #endif
+        return loc::MemRegionVal(R);
+    }
+
+    SVal VisitSVal(SVal V) {
+        #if DEBUG_DUMP
+        llvm::errs() << "Visitor::SVal:: "; V.dump(); llvm::errs() << "\n";
+        #endif
+        return Visit(V.getAsSymExpr());
+    }
+
+    SVal VisitSymbolData(const SymbolData *S) {
+        #if DEBUG_DUMP
+        llvm::errs() << "Visitor::SymbolData:: "; S->dump(); llvm::errs() << "\n";
+        #endif
+        //return to;
+        const SymExpr *P = (const SymExpr*)S;
+        if ( P && P == from.getAsSymbol() )
+            return to;
+    }
+
+  };
+
+  // A crude way of preventing this function from calling itself from evalBinOp.
+  //static bool isReentering = false;
+  //if (isReentering)
+  //  return V;
+
+  //isReentering = true;
+  SVal newV = Replacer(state, from, to).Visit(V);
+  //isReentering = false;
+
+  return newV;
+}
+
+
 
 void ento::registerSimpleBoundsChecker(CheckerManager &mgr) {
   mgr.registerChecker<SimpleBoundsChecker>();
