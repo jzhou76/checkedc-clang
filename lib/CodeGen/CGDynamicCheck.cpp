@@ -377,15 +377,19 @@ void CodeGenFunction::EmitDynamicStructIDCheck(const Expr *E) {
   // Return if the dereference is not a _MMSafe_ptr type.
   if (!E->getType()->isCheckedPointerMMSafeType()) return;
 
-  // Double-check that this is a dereference to a pointer variable.
-  assert((isa<CastExpr>(E) && isa<DeclRefExpr>(cast<CastExpr>(E)->getSubExpr()))
-      && "This is not a reference to a declared mmsafe_ptr variable.");
+  // Double-check the type of E.
+  const CastExpr *CE = dyn_cast<CastExpr>(E);
+  assert(CE && "This is not a CastExpr.");
+  const Expr *SE = CE->getSubExpr();
+  assert(isa<DeclRefExpr>(SE) || isa<MemberExpr>(SE) &&
+         "This is neither a DeclRefExpr nor a MemberExpr.");
 
   NumDynamicObjIDCheck++;
 
   // Get the LValue of the mmsafe_ptr.
-  LValue mmsafe_ptr_LV = EmitDeclRefLValue(
-      cast<DeclRefExpr>(cast<CastExpr>(E)->getSubExpr()));
+  LValue mmsafe_ptr_LV = isa<DeclRefExpr>(SE) ?
+                         EmitDeclRefLValue(cast<DeclRefExpr>(SE)) :
+                         EmitMemberExpr(cast<MemberExpr>(SE));
 
   Address mmsafe_ptr_Addr = mmsafe_ptr_LV.getAddress();
 
