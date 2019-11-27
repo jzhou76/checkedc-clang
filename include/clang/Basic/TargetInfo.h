@@ -20,6 +20,7 @@
 #include "clang/Basic/Specifiers.h"
 #include "clang/Basic/TargetCXXABI.h"
 #include "clang/Basic/TargetOptions.h"
+#include "clang/AST/Type.h"
 #include "llvm/ADT/APInt.h"
 #include "llvm/ADT/IntrusiveRefCntPtr.h"
 #include "llvm/ADT/Optional.h"
@@ -350,6 +351,25 @@ public:
   }
   uint64_t getPointerAlign(unsigned AddrSpace) const {
     return AddrSpace == 0 ? PointerAlign : getPointerAlignV(AddrSpace);
+  }
+  /// Checked C
+  /// MMSafe pointers are fat pointers; so their lengths are greater than
+  /// PointerWdith and their alignments are greater than PointerAlign.
+  ///
+  /// FIXME: Currently we only have one type of MMSafe pointer; later
+  /// we will add a new MMSafe pointer to arrays.
+  uint64_t getPointerWidth(unsigned AddrSpace, const clang::Type *T) const {
+    /// The magic number 64 means the lenght of the key of a MMSafe pointer.
+    return T->isCheckedPointerMMSafeType() ? PointerWidth + 64 :
+                                             PointerWidth * 2 + 64;
+  }
+  uint64_t getPointerAlign(unsigned AddrSpace, const clang::Type *T) const {
+    /// FIXME: Currently we implement for the x86-64 architecture;
+    /// we can fix the alginment of MMSafe pointers to 16 bytes (for struct)
+    /// and 32 bytes (for arrays). Later if we want to support more
+    /// architectures we need change this function.
+    return T->isCheckedPointerMMSafeType() ? PointerAlign * 2 :
+                                             PointerAlign * 4;
   }
 
   /// Return the maximum width of pointers on this target.

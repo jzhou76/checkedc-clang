@@ -1987,8 +1987,13 @@ TypeInfo ASTContext::getTypeInfoImpl(const Type *T) const {
     break;
   case Type::Pointer:
     AS = getTargetAddressSpace(cast<PointerType>(T)->getPointeeType());
-    Width = Target->getPointerWidth(AS);
-    Align = Target->getPointerAlign(AS);
+    if (T->isCheckedPointerMMSafeType()) {
+      Width = Target->getPointerWidth(AS, T);
+      Align = Target->getPointerAlign(AS, T);
+    } else {
+      Width = Target->getPointerWidth(AS);
+      Align = Target->getPointerAlign(AS);
+    }
     break;
   case Type::MemberPointer: {
     const auto *MPT = cast<MemberPointerType>(T);
