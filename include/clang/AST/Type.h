@@ -1392,7 +1392,7 @@ enum class AutoTypeKeyword {
 ///      expressions must be statically specified.  Pointer
 ///     arithmetic.  It has overflow checking.
 ///   4. Checked C _Nt_Array_ptr: these are pointers to null-terminated arrays.
-///   5. Checked C _MMSafe_ptr: these are pointers to struct objects.
+///   5. Checked C _TS_ptr: these are pointers to struct objects.
 ///      No pointer arithmetic is allowed.
 ///
 enum class CheckedPointerKind {
@@ -1404,8 +1404,8 @@ enum class CheckedPointerKind {
   Array,
   /// \brief Checked C _Nt_array_ptr type (pointer-to null-terminated array)
   NtArray,
-  /// Checked C _MMSafe_ptr type.
-  MMSafe,
+  /// Checked C _TS_ptr type.
+  TSPtr,
 };
 
 /// Checked C generalizes arrays to 3 different kinds of arrays.
@@ -2037,8 +2037,8 @@ public:
   bool isCheckedPointerArrayType() const;          // Checked C _Array_ptr or
                                                    // _Nt_array_ptr type.
   bool isExactlyCheckedPointerArrayType() const;   // Checked C _Array_ptr type.
-  bool isCheckedPointerNtArrayType() const;        // Checked C Nt_Array type.
-  bool isCheckedPointerMMSafeType() const;         // Checked C MMSafe_ptr type.
+  bool isCheckedPointerNtArrayType() const;        // Checked C _Nt_array type.
+  bool isCheckedPointerTSPtrType() const;          // Checked C _TS_ptr type.
   bool isAnyPointerType() const;   // Any C pointer or ObjC object pointer
   bool isBlockPointerType() const;
   bool isVoidPointerType() const;
@@ -6614,9 +6614,9 @@ inline bool Type::isCheckedPointerNtArrayType() const {
   return false;
 }
 
-inline bool Type::isCheckedPointerMMSafeType() const {
+inline bool Type::isCheckedPointerTSPtrType() const {
   if (const PointerType *T = getAs<PointerType>())
-    return T->getKind() == CheckedPointerKind::MMSafe;
+    return T->getKind() == CheckedPointerKind::TSPtr;
   return false;
 }
 

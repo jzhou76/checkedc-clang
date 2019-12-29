@@ -12207,7 +12207,7 @@ void Sema::ActOnUninitializedDecl(Decl *RealDecl) {
       BoundsExpr *B = Var->getBoundsExpr();
       bool InCheckedScope = IsCheckedScope();
       // If an interop type expression is available, use it.  That
-      // means that Var type itself is 
+      // means that Var type itself is
       if (InCheckedScope && Var->hasInteropTypeExpr())
         Ty = Var->getInteropType();
 
@@ -12217,7 +12217,7 @@ void Sema::ActOnUninitializedDecl(Decl *RealDecl) {
       else if (B && !B->isInvalid() && !B->isUnknown() && !Ty->isArrayType())
         Diag(Var->getLocation(), diag::err_initializer_expected_with_bounds)
           << Var;
-      else if (Ty->isCheckedPointerMMSafeType())
+      else if (Ty->isCheckedPointerTSPtrType())
         Diag(Var->getLocation(), diag::err_initializer_expected_for_ptr)
           << Var;
 

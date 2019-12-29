@@ -4107,14 +4107,14 @@ RValue CodeGenFunction::EmitCall(const CGFunctionInfo &CallInfo,
           llvm::Value *LI = Builder.CreateLoad(EltPtr);
           IRCallArgs[FirstIRArg + i] = LI;
 
-          if (STy->isMMSafePointerRep()) {
+          if (STy->isTSPointerRep()) {
             // Checked C
-            // LLVM flatterns the struct representation of _MMSafe_ptr<T>.
+            // LLVM flatterns the struct representation of _TS_ptr<T>.
             // There would be a type mismatch between the pointer of
             // the generic type (implemented as "i8*") and the concrete pointer
-            // type for _MMSafe_ptr<T>. Here we coerce the concrete type to be
-            // the same as the generic type. Vice versa does not work because
-            // it breaks the prototype of the function.
+            // type for _TS_ptr<T>. Here we coerce the concrete type to be
+            // the same as the generic type. The other way around does not work
+            // because it breaks the prototype of the function.
             IRCallArgs[FirstIRArg + i]->mutateType(
                 IRFuncTy->getParamType(FirstIRArg + i));
           }
@@ -4510,12 +4510,12 @@ RValue CodeGenFunction::EmitCall(const CGFunctionInfo &CallInfo,
           llvm::Value *V = CI;
 
           // Checked C
-          // When a generic function returns a _MMSafe_ptr<T>, there would be
+          // When a generic function returns a _TS_ptr<T>, there would be
           // a mismatch between the generic return type and the real return
           // type. In this situation, we need mutate the type of the generic
           // function to the real type.
-          if (V->getType()->isMMSafePointerTy() &&
-              RetIRTy->isMMSafePointerTy()) {
+          if (V->getType()->isTSPointerTy() &&
+              RetIRTy->isTSPointerTy()) {
               V->mutateType(RetIRTy);
           }
 

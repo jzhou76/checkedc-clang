@@ -361,52 +361,52 @@ BasicBlock *CodeGenFunction::EmitDynamicCheckFailedBlock() {
 // Checked C
 // EmitDynamicStructIDCheck()
 //
-// This method dynamically checks if the ID of a dereferenced mmsafe_ptr
-// matches the ID of the struct object pointed to by this mmsafe_ptr.
+// This method dynamically checks if the ID of a dereferenced _TS_ptr
+// matches the ID of the struct object pointed to by this _TS_ptr.
 // If they don't match, insert and jumps to an llvm.trap() intrinsic.
 //
-// \param E - a clang Expr representing a dereference to a mmsafe_ptr.
+// \param E - a clang Expr representing a dereference to a _TS_ptr.
 //
 // Outputs:
-//   A series of IR instructions that extract the ID of the mmsafe_ptr and
+//   A series of IR instructions that extract the ID of the _TS_ptr and
 //   the ID of the pointee, and do the comparison.
 //
 void CodeGenFunction::EmitDynamicStructIDCheck(const Expr *E) {
   if (!getLangOpts().CheckedC) return;
 
-  // Return if the dereference is not a _MMSafe_ptr type.
-  if (!E->getType()->isCheckedPointerMMSafeType()) return;
+  // Return if the dereference is not a _TS_ptr type.
+  if (!E->getType()->isCheckedPointerTSPtrType()) return;
 
   // Double-check that this is a dereference to a pointer variable.
   assert((isa<CastExpr>(E) && isa<DeclRefExpr>(cast<CastExpr>(E)->getSubExpr()))
-      && "This is not a reference to a declared mmsafe_ptr variable.");
+      && "This is not a reference to a declared _TS_ptr variable.");
 
   NumDynamicObjIDCheck++;
 
-  // Get the LValue of the mmsafe_ptr.
-  LValue mmsafe_ptr_LV = EmitDeclRefLValue(
+  // Get the LValue of the ts_ptr.
+  LValue ts_ptr_LV = EmitDeclRefLValue(
       cast<DeclRefExpr>(cast<CastExpr>(E)->getSubExpr()));
 
-  Address mmsafe_ptr_Addr = mmsafe_ptr_LV.getAddress();
+  Address ts_ptr_Addr = ts_ptr_LV.getAddress();
 
   // Get the name of the variable
-  StringRef ptrName = mmsafe_ptr_Addr.getName();
+  StringRef ptrName = ts_ptr_Addr.getName();
 
-  // Step 1: get the pointer to the ID field of the mmsafe_ptr.
-  Address mmsafe_ptr_IDAddr =
-    Builder.CreateStructGEP(mmsafe_ptr_Addr,
-                            1,  // The ID is the second field of a mmsafe_ptr.
+  // Step 1: get the pointer to the ID field of the ts_ptr.
+  Address ts_ptr_IDAddr =
+    Builder.CreateStructGEP(ts_ptr_Addr,
+                            1,  // The ID is the second field of a ts_ptr.
                             CharUnits::fromQuantity(8),
-                            ptrName + "_MMSafe_ptr_ID_Ptr");
+                            ptrName + "_TS_ptr_ID_Ptr");
 
   // Step 2: load the ID to an integer.
-  llvm::LoadInst *mmsafe_ptr_ID =
-    Builder.CreateLoad(mmsafe_ptr_IDAddr, false, ptrName + "_MMSafe_ptr_ID");
+  llvm::LoadInst *ts_ptr_ID =
+    Builder.CreateLoad(ts_ptr_IDAddr, false, ptrName + "_TS_ptr_ID");
 
   CharUnits alignment = CharUnits::fromQuantity(8);
 
   // Step 3: get the pointer to the ID field of the target struct.
-  Address objAddr(mmsafe_ptr_Addr.getPointer(), alignment);
+  Address objAddr(ts_ptr_Addr.getPointer(), alignment);
   llvm::LoadInst *objIDPtr =
     Builder.CreateLoad(objAddr, false, ptrName + "_pointee_ID_Ptr");
   Address objIDAddr =
@@ -420,7 +420,7 @@ void CodeGenFunction::EmitDynamicStructIDCheck(const Expr *E) {
 
   // Step 5: create a comparison instrution of the two IDs.
   Value *IDCheckInst =
-    Builder.CreateICmpEQ(mmsafe_ptr_ID, objID, ptrName + "_ID_Checking");
+    Builder.CreateICmpEQ(ts_ptr_ID, objID, ptrName + "_ID_Checking");
 
   // Step 6: emit a dynamic checking block.
   EmitDynamicCheckBlocks(IDCheckInst);

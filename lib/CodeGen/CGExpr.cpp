@@ -3831,7 +3831,7 @@ LValue CodeGenFunction::EmitMemberExpr(const MemberExpr *E) {
     EmitDynamicBoundsCheck(Addr, E->getBoundsExpr(), BCK_Normal, nullptr);
 
     // Checked C
-    // Before dereferencing, do a _MMSafe_ptr validity check.
+    // Before dereferencing, do a _TS_ptr validity check.
     EmitDynamicStructIDCheck(BaseExpr);
   } else
     BaseLV = EmitCheckedLValue(BaseExpr, TCK_MemberAccess);

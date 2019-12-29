@@ -2582,10 +2582,10 @@ void X86_64ABIInfo::classify(QualType Ty, uint64_t OffsetBase,
     Current = Integer;  // Lo = Integer
 
     // Checked C:
-    // _MMSafe_ptr is a pointer from the perspective of the AST, while it is
+    // _TS_ptr is a pointer from the perspective of the AST, while it is
     // implemented as a struct which contains a real pointer and a
     // 64-bit integer as ID. So we need set the Hi (ID) to be an integer.
-    if (Ty->isCheckedPointerMMSafeType()) {
+    if (Ty->isCheckedPointerTSPtrType()) {
       Hi = Integer;
     }
 

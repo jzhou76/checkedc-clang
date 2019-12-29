@@ -27,9 +27,9 @@ class Address {
   CharUnits Alignment;
 
 private:
-  bool _containMMSafePtr;
+  bool _containTSPtr;
   llvm::Type *originalPointerTy;
-  llvm::Type *rawPointerTy;  // The inner pointer type of a _MMSafe_ptr.
+  llvm::Type *rawPointerTy;  // The inner pointer type of a _TS_ptr.
 
 public:
   Address(llvm::Value *pointer, CharUnits alignment)
@@ -37,29 +37,29 @@ public:
     assert((!alignment.isZero() || pointer == nullptr) &&
            "creating valid address with invalid alignment");
     if (pointer) {
-      // Backup the original _MMSafe_ptr type.
+      // Backup the original _TS_ptr type.
       originalPointerTy = pointer->getType();
 
-      // Checked C: for _MMSafe_ptr, reset the poitner type.
-      if (pointer->getType()->isMMSafePointerTy()) {
-        _containMMSafePtr = true;
-        rawPointerTy = pointer->getType()->getInnerPtrFromMMSafePtr();
+      // Checked C: for _TS_ptr, reset the poitner type.
+      if (pointer->getType()->isTSPointerTy()) {
+        _containTSPtr = true;
+        rawPointerTy = pointer->getType()->getInnerPtrFromTSPtr();
         pointer->mutateType(rawPointerTy);
       }
     }
   }
 
-  // Return true if this Address contains a _MMSafe_ptr.
-  bool containMMSafePtr() const { return _containMMSafePtr; }
+  // Return true if this Address contains a _TS_ptr.
+  bool containTSPtr() const { return _containTSPtr; }
 
-  //  Set the pointer type to be the inner pointer type of a _MMSafe_ptr.
+  //  Set the pointer type to be the inner pointer type of a _TS_ptr.
   void mutatePointerType() {
-    if (containMMSafePtr()) Pointer->mutateType(rawPointerTy);
+    if (containTSPtr()) Pointer->mutateType(rawPointerTy);
   }
 
-  // Restore the original _MMSafe_ptr type.
-  void restoreMMSafePtrType() {
-    if (containMMSafePtr()) Pointer->mutateType(originalPointerTy);
+  // Restore the original _TS_ptr type.
+  void restoreTSPtrType() {
+    if (containTSPtr()) Pointer->mutateType(originalPointerTy);
   }
 
   static Address invalid() { return Address(nullptr, CharUnits()); }
@@ -73,9 +73,9 @@ public:
   /// Return the type of the pointer value.
   llvm::PointerType *getType() const {
     llvm::Type *pointerTy = getPointer()->getType();
-    if (pointerTy->isMMSafePointerTy()) {
-      // Checked C: extract the inner pointer inside an _MMSafe_ptr.
-      return pointerTy->getInnerPtrFromMMSafePtr();
+    if (pointerTy->isTSPointerTy()) {
+      // Checked C: extract the inner pointer inside an _TS_ptr.
+      return pointerTy->getInnerPtrFromTSPtr();
     }
 
     return llvm::cast<llvm::PointerType>(getPointer()->getType());
