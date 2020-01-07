@@ -52,6 +52,7 @@ void CodeGenFunction::EmitExplicitDynamicCheck(const Expr *Condition) {
 //
 
 void CodeGenFunction::EmitDynamicNonNullCheck(const Address BaseAddr, const QualType BaseTy) {
+  return;
   if (!getLangOpts().CheckedC)
     return;
 
@@ -412,11 +413,11 @@ void CodeGenFunction::EmitDynamicStructIDCheck(const Expr *E) {
   // Step 3: get the pointer to the ID field of the target struct.
   Address objAddr(mmsafe_ptr_Addr.getPointer(), alignment);
   llvm::LoadInst *objIDPtr =
-    Builder.CreateLoad(objAddr, false, ptrName + "_pointee_ID_Ptr");
+    Builder.CreateLoad(objAddr, false, ptrName + "_Obj_Ptr");
   Address objIDAddr =
     Builder.CreateStructGEP(Address(objIDPtr, alignment),
                             0,  // ID is always the first field of a struct.
-                            CharUnits::fromQuantity(0), ptrName + "_Obj_Ptr");
+                            CharUnits::fromQuantity(0), ptrName + "_Obj_ID_Ptr");
 
   // Step 4: load the pointee object's ID to an integer.
   llvm::LoadInst *objID =
