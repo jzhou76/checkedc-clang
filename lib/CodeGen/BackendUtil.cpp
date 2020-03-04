@@ -33,6 +33,7 @@
 #include "llvm/IR/Module.h"
 #include "llvm/IR/ModuleSummaryIndex.h"
 #include "llvm/IR/Verifier.h"
+#include "llvm/IR/HarmonizeType.h"
 #include "llvm/LTO/LTOBackend.h"
 #include "llvm/MC/MCAsmInfo.h"
 #include "llvm/MC/SubtargetFeature.h"
@@ -664,6 +665,11 @@ void EmitAssemblyHelper::CreatePasses(legacy::PassManager &MPM,
   FPM.add(new TargetLibraryInfoWrapperPass(*TLII));
   if (CodeGenOpts.VerifyModule)
     FPM.add(createVerifierPass());
+
+  /// Checked C: run the MMSafePtr type mismatch resolving pass.
+  if (CodeGenOpts.HarmonizeType) {
+    FPM.add(createHarmonizeTypePass());
+  }
 
   // Set up the per-module pass manager.
   if (!CodeGenOpts.RewriteMapFiles.empty())
