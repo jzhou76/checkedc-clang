@@ -1742,6 +1742,14 @@ void CodeGenFunction::EmitStoreOfScalar(llvm::Value *Value, Address Addr,
     return;
   }
 
+  llvm::Type *pointeeTy =
+    cast<llvm::PointerType>(Addr.getPointer()->getType())->getElementType();
+  if (pointeeTy->isMMSafePointerTy() && Value->getType() != pointeeTy) {
+    // Checked C: Assign an NULL to an MMSafe_ptr.
+    // Get the Address of the inner pointer.
+    Addr = Builder.CreateStructGEP(Addr, 0, CharUnits::fromQuantity(0),
+                                   Addr.getName() + "_innerPtr");
+  }
   llvm::StoreInst *Store = Builder.CreateStore(Value, Addr, Volatile);
   if (isNontemporal) {
     llvm::MDNode *Node =
