@@ -2108,12 +2108,18 @@ Value *ScalarExprEmitter::VisitCastExpr(CastExpr *CE) {
   case CK_FunctionToPointerDecay:
     return EmitLValue(E).getPointer();
 
-  case CK_NullToPointer:
+  case CK_NullToPointer: {
     if (MustVisitNullValue(E))
       (void) Visit(E);
-
-    return CGF.CGM.getNullPointer(cast<llvm::PointerType>(ConvertType(DestTy)),
-                              DestTy);
+    llvm::Type *llvmDestTy = ConvertType(DestTy);
+    if (DestTy->isCheckedPointerMMSafeType()) {
+      // Checked C: assign an NULL to a MMSafe_ptr.
+      return CGF.CGM.getNullPointer(
+          cast<llvm::StructType>(llvmDestTy)->getInnerPtrFromMMSafePtr(), DestTy);
+    } else {
+      return CGF.CGM.getNullPointer(cast<llvm::PointerType>(llvmDestTy), DestTy);
+    }
+   }
 
   case CK_NullToMemberPointer: {
     if (MustVisitNullValue(E))
