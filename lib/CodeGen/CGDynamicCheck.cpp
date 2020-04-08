@@ -382,15 +382,20 @@ void CodeGenFunction::EmitDynamicStructIDCheck(const Expr *E) {
   const CastExpr *CE = dyn_cast<CastExpr>(E);
   assert(CE && "This is not a CastExpr.");
   const Expr *SE = CE->getSubExpr();
-  assert(isa<DeclRefExpr>(SE) || isa<MemberExpr>(SE) &&
-         "This is neither a DeclRefExpr nor a MemberExpr.");
+    assert((isa<DeclRefExpr>(SE) ||
+            isa<MemberExpr>(SE) ||
+            isa<ArraySubscriptExpr>(SE)) &&
+           "This MMSafe_ptr is not a DeclRefExpr, or a MemberExpr,\
+            or an ArraySubscriptExpr.");
 
   NumDynamicObjIDCheck++;
 
   // Get the LValue of the mmsafe_ptr.
   LValue mmsafe_ptr_LV = isa<DeclRefExpr>(SE) ?
                          EmitDeclRefLValue(cast<DeclRefExpr>(SE)) :
-                         EmitMemberExpr(cast<MemberExpr>(SE));
+                         isa<MemberExpr>(SE) ?
+                         EmitMemberExpr(cast<MemberExpr>(SE)) :
+                         EmitArraySubscriptExpr(cast<ArraySubscriptExpr>(SE));
 
   Address mmsafe_ptr_Addr = mmsafe_ptr_LV.getAddress();
 
