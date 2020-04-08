@@ -1678,7 +1678,7 @@ llvm::Constant *ConstantLValueEmitter::tryEmit() {
   if (destTy->isMMSafePointerTy()) {
     // Checked C
     // The source code should be assining NULL to an array of MMSafePtr.
-    destTy = cast<llvm::StructType>(destTy)->getInnerPtrFromMMSafePtr();
+    destTy = cast<llvm::StructType>(destTy)->getMMSafePtrInnerPtr();
   }
   assert(isa<llvm::IntegerType>(destTy) || isa<llvm::PointerType>(destTy));
 

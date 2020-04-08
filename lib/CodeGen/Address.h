@@ -43,7 +43,7 @@ public:
       // Checked C: for _MMSafe_ptr, reset the poitner type.
       if (pointer->getType()->isMMSafePointerTy()) {
         _containMMSafePtr = true;
-        rawPointerTy = pointer->getType()->getInnerPtrFromMMSafePtr();
+        rawPointerTy = pointer->getType()->getMMSafePtrInnerPtr();
         pointer->mutateType(rawPointerTy);
       }
     }
@@ -75,7 +75,7 @@ public:
     llvm::Type *pointerTy = getPointer()->getType();
     if (pointerTy->isMMSafePointerTy()) {
       // Checked C: extract the inner pointer inside an _MMSafe_ptr.
-      return pointerTy->getInnerPtrFromMMSafePtr();
+      return pointerTy->getMMSafePtrInnerPtr();
     }
 
     return llvm::cast<llvm::PointerType>(getPointer()->getType());

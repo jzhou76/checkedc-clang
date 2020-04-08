@@ -2115,7 +2115,7 @@ Value *ScalarExprEmitter::VisitCastExpr(CastExpr *CE) {
     if (DestTy->isCheckedPointerMMSafeType()) {
       // Checked C: assign an NULL to a MMSafe_ptr.
       return CGF.CGM.getNullPointer(
-          cast<llvm::StructType>(llvmDestTy)->getInnerPtrFromMMSafePtr(), DestTy);
+          cast<llvm::StructType>(llvmDestTy)->getMMSafePtrInnerPtr(), DestTy);
     } else {
       return CGF.CGM.getNullPointer(cast<llvm::PointerType>(llvmDestTy), DestTy);
     }
