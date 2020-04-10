@@ -1392,8 +1392,10 @@ enum class AutoTypeKeyword {
 ///      expressions must be statically specified.  Pointer
 ///     arithmetic.  It has overflow checking.
 ///   4. Checked C _Nt_Array_ptr: these are pointers to null-terminated arrays.
-///   5. Checked C _MMSafe_ptr: these are pointers to struct objects.
-///      No pointer arithmetic is allowed.
+///   5. Checked C _MM_ptr: these are memory-managment-safe pointers to
+///      struct objects. No pointer arithmetic is allowed.
+///   6. Checked C _MM_Array_ptr: these are memory-managment-safe pointers to
+///      array objects. Pointer arithmetic is allowed.
 ///
 enum class CheckedPointerKind {
   /// \brief Unchecked C pointer.
@@ -1404,8 +1406,10 @@ enum class CheckedPointerKind {
   Array,
   /// \brief Checked C _Nt_array_ptr type (pointer-to null-terminated array)
   NtArray,
-  /// Checked C _MMSafe_ptr type.
-  MMSafe,
+  /// Checked C _MM_ptr type.
+  MMPtr,
+  /// Checked C _MM_Array_ptr type.
+  MMArray,
 };
 
 /// Checked C generalizes arrays to 3 different kinds of arrays.
@@ -2038,7 +2042,8 @@ public:
                                                    // _Nt_array_ptr type.
   bool isExactlyCheckedPointerArrayType() const;   // Checked C _Array_ptr type.
   bool isCheckedPointerNtArrayType() const;        // Checked C Nt_Array type.
-  bool isCheckedPointerMMSafeType() const;         // Checked C MMSafe_ptr type.
+  bool isCheckedPointerMMType() const;             // Checked C _MM_ptr type.
+  bool isCheckedPointerMMArrayType() const;        // Checked C _MM_Array_ptr type.
   bool isAnyPointerType() const;   // Any C pointer or ObjC object pointer
   bool isBlockPointerType() const;
   bool isVoidPointerType() const;
@@ -6614,9 +6619,15 @@ inline bool Type::isCheckedPointerNtArrayType() const {
   return false;
 }
 
-inline bool Type::isCheckedPointerMMSafeType() const {
+inline bool Type::isCheckedPointerMMType() const {
   if (const PointerType *T = getAs<PointerType>())
-    return T->getKind() == CheckedPointerKind::MMSafe;
+    return T->getKind() == CheckedPointerKind::MMPtr;
+  return false;
+}
+
+inline bool Type::isCheckedPointerMMArrayType() const {
+  if (const PointerType *T = getAs<PointerType>())
+    return T->getKind() == CheckedPointerKind::MMArray;
   return false;
 }
 

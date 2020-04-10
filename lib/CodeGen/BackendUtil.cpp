@@ -666,7 +666,7 @@ void EmitAssemblyHelper::CreatePasses(legacy::PassManager &MPM,
   if (CodeGenOpts.VerifyModule)
     FPM.add(createVerifierPass());
 
-  /// Checked C: run the MMSafePtr type mismatch resolving pass.
+  /// Checked C: run the _MM_ptr type mismatch resolving pass.
   if (CodeGenOpts.HarmonizeType) {
     FPM.add(createHarmonizeTypePass());
   }

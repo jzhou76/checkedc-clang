@@ -548,10 +548,10 @@ llvm::Type *CodeGenTypes::ConvertType(QualType T) {
       PointeeType = llvm::Type::getInt8Ty(getLLVMContext());
     unsigned AS = Context.getTargetAddressSpace(ETy);
 
-    if (PTy->isCheckedPointerMMSafeType()) {
-      // Checked C: build a _MMSafe_ptr pointer.
-      ResultType = llvm::PointerType::getMMSafePtr(PointeeType,
-                                                   getLLVMContext(), AS);
+    if (PTy->isCheckedPointerMMType()) {
+      // Checked C: build a _MM_ptr pointer.
+      ResultType = llvm::PointerType::getMMPtr(PointeeType,
+                                               getLLVMContext(), AS);
     } else {
       ResultType = llvm::PointerType::get(PointeeType, AS);
     }

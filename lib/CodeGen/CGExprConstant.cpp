@@ -1675,10 +1675,10 @@ llvm::Constant *ConstantLValueEmitter::tryEmit() {
   // non-zero null pointer and addrspace casts that aren't trivially
   // represented in LLVM IR.
   auto destTy = CGM.getTypes().ConvertTypeForMem(DestType);
-  if (destTy->isMMSafePointerTy()) {
+  if (destTy->isMMPointerTy()) {
     // Checked C
-    // The source code should be assining NULL to an array of MMSafePtr.
-    destTy = cast<llvm::StructType>(destTy)->getMMSafePtrInnerPtr();
+    // The source code should be assining NULL to an array of _MM_ptr.
+    destTy = cast<llvm::StructType>(destTy)->getMMPtrInnerPtr();
   }
   assert(isa<llvm::IntegerType>(destTy) || isa<llvm::PointerType>(destTy));
 

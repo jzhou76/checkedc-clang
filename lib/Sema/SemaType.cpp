@@ -1535,11 +1535,12 @@ static QualType ConvertDeclSpecToType(TypeProcessingState &state) {
   case DeclSpec::TST_plainPtr:
   case DeclSpec::TST_arrayPtr:
   case DeclSpec::TST_nt_arrayPtr:
-  case DeclSpec::TST_mmsafePtr: {
+  case DeclSpec::TST_mmPtr:
+  case DeclSpec::TST_mmarrayPtr: {
       Result = S.GetTypeFromParser(DS.getRepAsType());
       assert(!Result.isNull() &&
              "Didn't get a type for _Ptr, _Array_ptr, _Nt_array_ptr, \
-             or _MMSafe_ptr?");
+             _MM_ptr, or _MM_array_ptr?");
       // The name we're declaring, if any.
       DeclarationName Name;
       if (declarator.getIdentifier())
@@ -1556,8 +1557,11 @@ static QualType ConvertDeclSpecToType(TypeProcessingState &state) {
         case DeclSpec::TST_nt_arrayPtr:
           Kind = CheckedPointerKind::NtArray;
           break;
-        case DeclSpec::TST_mmsafePtr:
-          Kind = CheckedPointerKind::MMSafe;
+        case DeclSpec::TST_mmPtr:
+          Kind = CheckedPointerKind::MMPtr;
+          break;
+        case DeclSpec::TST_mmarrayPtr:
+          Kind = CheckedPointerKind::MMArray;
           break;
         default:
             llvm_unreachable("unexpected type spec type");
@@ -2014,12 +2018,12 @@ QualType Sema::BuildPointerType(QualType T, CheckedPointerKind kind,
     return QualType();
   }
 
-  // In Checked C, _MMSafe_ptr is only allowed to point to struct types.
-  // One special case is when a _MMSafe_ptr is in a generic function, the
+  // Checked C: _MM_ptr is only allowed to point to struct types.
+  // One special case is when a _MM_ptr is in a generic function, the
   // type of its pointee is allowed to be a TypeVariableType.
-  if (kind == CheckedPointerKind::MMSafe &&
+  if (kind == CheckedPointerKind::MMPtr &&
       (!T->isStructureType() && !T.getTypePtr()->getAs<TypeVariableType>())) {
-    Diag(Loc, diag::err_illegal_decl_mmsafe_ptr_to_non_struct)
+    Diag(Loc, diag::err_illegal_decl_mm_ptr_to_non_struct)
       << getPrintableNameForEntity(Entity) << T;
     return QualType();
   }

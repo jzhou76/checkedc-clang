@@ -3859,10 +3859,11 @@ void Parser::ParseDeclarationSpecifiers(DeclSpec &DS,
     case tok::kw__Ptr:
     case tok::kw__Array_ptr:
     case tok::kw__Nt_array_ptr:
-    case tok::kw__MMSafe_ptr: {
+    case tok::kw__MM_ptr:
+    case tok::kw__MM_array_ptr: {
       ParseCheckedPointerSpecifiers(DS);
       // continue to keep the current token from being consumed.
-      continue; 
+      continue;
     }
     // class-specifier:
     case tok::kw_class:
@@ -4942,7 +4943,8 @@ bool Parser::isKnownToBeTypeSpecifier(const Token &Tok) const {
   case tok::kw__Array_ptr:
   case tok::kw__Nt_array_ptr:
   case tok::kw__Ptr:
-  case tok::kw__MMSafe_ptr:
+  case tok::kw__MM_ptr:
+  case tok::kw__MM_array_ptr:
 
     return true;
   }
@@ -5069,7 +5071,8 @@ bool Parser::isTypeSpecifierQualifier() {
   case tok::kw__Ptr:
   case tok::kw__Array_ptr:
   case tok::kw__Nt_array_ptr:
-  case tok::kw__MMSafe_ptr:
+  case tok::kw__MM_ptr:
+  case tok::kw__MM_array_ptr:
 
     return true;
 
@@ -5226,7 +5229,8 @@ bool Parser::isDeclarationSpecifier(bool DisambiguatingWithExpression) {
   case tok::kw__Ptr:
   case tok::kw__Array_ptr:
   case tok::kw__Nt_array_ptr:
-  case tok::kw__MMSafe_ptr:
+  case tok::kw__MM_ptr:
+  case tok::kw__MM_array_ptr:
   // Checked C scope keywords for functions/structs
   case tok::kw__Checked:
   case tok::kw__Unchecked:
@@ -7292,10 +7296,12 @@ void Parser::ParseAtomicSpecifier(DeclSpec &DS) {
 ///           _Ptr &lt type name &gt
 ///           _Array_ptr &lt type name &gt
 ///           _Nt_array_ptr &lt type name &gt
-///           _MMSafe_ptr &lt type name &gt
+///           _MM_ptr &lt type name &gt
+///           _MM_array_ptr &lt type name &gt
 void Parser::ParseCheckedPointerSpecifiers(DeclSpec &DS) {
     assert((Tok.is(tok::kw__Ptr) || Tok.is(tok::kw__Array_ptr) ||
-            Tok.is(tok::kw__Nt_array_ptr) || Tok.is(tok::kw__MMSafe_ptr)) &&
+            Tok.is(tok::kw__Nt_array_ptr) || Tok.is(tok::kw__MM_ptr) ||
+            Tok.is(tok::kw__MM_array_ptr)) &&
            "Not a checked pointer specifier");
     tok::TokenKind Kind = Tok.getKind();
     SourceLocation StartLoc = ConsumeToken();
@@ -7318,7 +7324,7 @@ void Parser::ParseCheckedPointerSpecifiers(DeclSpec &DS) {
     }
     else if (Tok.getKind() == tok::greatergreater) {
         Tok.setKind(tok::greater);
-        Tok.setLocation(Tok.getLocation().getLocWithOffset(1));    
+        Tok.setLocation(Tok.getLocation().getLocWithOffset(1));
     }
     else if (Tok.getKind() == tok::greatergreaterequal) {
         Tok.setKind(tok::greaterequal);
@@ -7327,7 +7333,7 @@ void Parser::ParseCheckedPointerSpecifiers(DeclSpec &DS) {
     else {
         // we know this will fail and generate a diagnostic
         ExpectAndConsume(tok::greater);
-        return;      
+        return;
     }
 
     DS.SetRangeEnd(EndLoc);
@@ -7341,8 +7347,10 @@ void Parser::ParseCheckedPointerSpecifiers(DeclSpec &DS) {
       pointerKind = TST_arrayPtr;
     else if (Kind == tok::kw__Nt_array_ptr)
       pointerKind = TST_ntarrayPtr;
-    else if (Kind == tok::kw__MMSafe_ptr)
-      pointerKind = TST_mmsafePtr;
+    else if (Kind == tok::kw__MM_ptr)
+      pointerKind = TST_mmPtr;
+    else if (Kind == tok::kw__MM_array_ptr)
+      pointerKind = TST_mmarrayPtr;
 
     if (DS.SetTypeSpecType(pointerKind, StartLoc, PrevSpec,
         DiagID, Result.get(),

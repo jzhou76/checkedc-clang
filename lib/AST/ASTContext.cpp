@@ -1987,7 +1987,7 @@ TypeInfo ASTContext::getTypeInfoImpl(const Type *T) const {
     break;
   case Type::Pointer:
     AS = getTargetAddressSpace(cast<PointerType>(T)->getPointeeType());
-    if (T->isCheckedPointerMMSafeType()) {
+    if (T->isCheckedPointerMMType() || T->isCheckedPointerMMArrayType()) {
       Width = Target->getPointerWidth(AS, T);
       Align = Target->getPointerAlign(AS, T);
     } else {

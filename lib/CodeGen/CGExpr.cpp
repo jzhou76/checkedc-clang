@@ -1744,8 +1744,8 @@ void CodeGenFunction::EmitStoreOfScalar(llvm::Value *Value, Address Addr,
 
   llvm::Type *pointeeTy =
     cast<llvm::PointerType>(Addr.getPointer()->getType())->getElementType();
-  if (pointeeTy->isMMSafePointerTy() && Value->getType() != pointeeTy) {
-    // Checked C: Assign an NULL to an MMSafe_ptr.
+  if (pointeeTy->isMMPointerTy() && Value->getType() != pointeeTy) {
+    // Checked C: Assign an NULL to an _MM_ptr.
     // Get the Address of the inner pointer.
     Addr = Builder.CreateStructGEP(Addr, 0, CharUnits::fromQuantity(0),
                                    Addr.getName() + "_innerPtr");
@@ -3839,7 +3839,8 @@ LValue CodeGenFunction::EmitMemberExpr(const MemberExpr *E) {
     EmitDynamicBoundsCheck(Addr, E->getBoundsExpr(), BCK_Normal, nullptr);
 
     // Checked C
-    // Before dereferencing, do a _MMSafe_ptr validity check.
+    // Before dereferencing, do a _MM_ptr validity check.
+    // TODO: add support for _MM_array_ptr.
     EmitDynamicStructIDCheck(BaseExpr);
   } else
     BaseLV = EmitCheckedLValue(BaseExpr, TCK_MemberAccess);
