@@ -9538,10 +9538,6 @@ def err_illegal_decl_mm_ptr_to_non_struct : Error<
   "'%0' declared as _MM_ptr to type %1; "
   "only struct types are allowed">;
 
-def err_illegal_decl_mm_array_ptr_to_non_array : Error<
-  "'%0' declared as _MM_array_ptr to type %1; "
-  "only array types are allowed">;
-
 def err_checked_cplusplus : Error<
   "checked extension not supported for C++">;
 
