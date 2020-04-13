@@ -552,6 +552,10 @@ llvm::Type *CodeGenTypes::ConvertType(QualType T) {
       // Checked C: build a _MM_ptr pointer.
       ResultType = llvm::PointerType::getMMPtr(PointeeType,
                                                getLLVMContext(), AS);
+    } else if (PTy->isCheckedPointerMMArrayType()) {
+      // Checked C: build a _MM_array_ptr pointer.
+      ResultType = llvm::PointerType::getMMArrayPtr(PointeeType,
+                                                    getLLVMContext(), AS);
     } else {
       ResultType = llvm::PointerType::get(PointeeType, AS);
     }
