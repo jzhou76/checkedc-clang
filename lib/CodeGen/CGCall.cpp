@@ -3873,7 +3873,27 @@ RValue CodeGenFunction::EmitCall(const CGFunctionInfo &CallInfo,
       }
     }
     if (IRFunctionArgs.hasSRetArg()) {
-      IRCallArgs[IRFunctionArgs.getSRetArgNo()] = SRetPtr.getPointer();
+      unsigned SRetArgNo = IRFunctionArgs.getSRetArgNo();
+      IRCallArgs[SRetArgNo] = SRetPtr.getPointer();
+      // Checked C
+      // Handle the case when a _MM_array_ptr<T> is returned by a function.
+      // In this case, there could be a type mismatch between the concrete
+      // type from the caller side and the generic type from the calee side.
+      // Here we mutate the type of the concrete _MM_array_ptr to be
+      // the generic one as the callee's.
+      //
+      // When the return type is a struct over 128 bits, for x86-64 ABI,
+      // LLVM transforms the function prototype to return void and add
+      // a parameter of a pointer to the struct (sret).
+      llvm::PointerType *SRetPointerTy =
+        dyn_cast<llvm::PointerType>(IRCallArgs[SRetArgNo]->getType());
+      llvm::PointerType *IRFuncSRetTy =
+        dyn_cast<llvm::PointerType>(IRFuncTy->getParamType(SRetArgNo));
+      if (SRetPointerTy && IRFuncSRetTy &&
+          SRetPointerTy->getElementType()->isMMArrayPointerTy() &&
+          IRFuncSRetTy->getElementType()->isMMArrayPointerTy()) {
+        IRCallArgs[SRetArgNo]->mutateType(IRFuncTy->getParamType(SRetArgNo));
+      }
     } else if (RetAI.isInAlloca()) {
       Address Addr = createInAllocaStructGEP(RetAI.getInAllocaFieldIndex());
       Builder.CreateStore(SRetPtr.getPointer(), Addr);
