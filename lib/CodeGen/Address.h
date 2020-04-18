@@ -27,7 +27,9 @@ class Address {
   CharUnits Alignment;
 
 private:
-  bool _containMMPtr;
+  // Chekced C
+  bool _isMMPtr = false;
+  bool _isMMArrayPtr = false;
   llvm::Type *originalPointerTy;
   llvm::Type *rawPointerTy;  // The inner pointer type of a _MM_ptr.
 
@@ -36,32 +38,42 @@ public:
       : Pointer(pointer), Alignment(alignment) {
     assert((!alignment.isZero() || pointer == nullptr) &&
            "creating valid address with invalid alignment");
-    /// Checked C: FIXME: add support for _MM_array_ptr.
     if (pointer) {
       // Backup the original _MM_ptr type.
       originalPointerTy = pointer->getType();
 
-      // Checked C: for _MM_ptr, reset the poitner type.
+      // Checked C: For _MM_ptr and _MM_array_ptr, set the pointer type
+      // to be the inner raw pointer type. Without this mutation,
+      // pointer dereference would fail because the compiler would try to
+      // dereference an llvm::StructType.
       if (pointer->getType()->isMMPointerTy()) {
-        _containMMPtr = true;
+        _isMMPtr = true;
         rawPointerTy = pointer->getType()->getMMPtrInnerPtr();
         pointer->mutateType(rawPointerTy);
+      } else if (pointer->getType()->isMMArrayPointerTy()) {
+        _isMMArrayPtr = true;
+        rawPointerTy = pointer->getType()->getMMArrayPtrInnerPtr();
+        pointer->mutateType(rawPointerTy);
+      } else {
+        rawPointerTy = originalPointerTy;
       }
     }
   }
 
-  // Return true if this Address contains a _MM_ptr.
-  bool containMMPtr() const { return _containMMPtr; }
+  // Return true if this Address represents a _MM_ptr.
+  bool isMMPtr() const { return _isMMPtr; }
 
-  //  Set the pointer type to be the inner pointer type of a _MM_ptr.
+  // Return true if this Address represents a _MM_array_ptr.
+  bool isMMArrayPtr() const { return _isMMArrayPtr; }
+
+  //  Set the pointer type to be the inner pointer type of a _MM_ptr
+  //  or a _MM_array_ptr.
   void mutatePointerType() {
-    if (containMMPtr()) Pointer->mutateType(rawPointerTy);
+    if (isMMPtr() || isMMArrayPtr()) Pointer->mutateType(rawPointerTy);
   }
 
-  // Restore the original _MM_ptr type.
-  void restoreMMPtrType() {
-    if (containMMPtr()) Pointer->mutateType(originalPointerTy);
-  }
+  // Restore the original _MM_ptr or _MM_array type.
+  void restoreMMPtrType() { Pointer->mutateType(originalPointerTy); }
 
   static Address invalid() { return Address(nullptr, CharUnits()); }
   bool isValid() const { return Pointer != nullptr; }
