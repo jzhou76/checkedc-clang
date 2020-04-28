@@ -364,13 +364,19 @@ BasicBlock *CodeGenFunction::EmitDynamicCheckFailedBlock() {
 //
 // This method dynamically checks if the ID of a dereferenced mm_ptr
 // matches the ID of the struct object pointed to by this mm_ptr.
-// If they don't match, insert and jumps to an llvm.trap() intrinsic.
+// If they don't match, insert and jump to an llvm.trap() intrinsic.
 //
 // \param E - a clang Expr representing a dereference to a mm_ptr.
 //
 // Outputs:
 //   A series of IR instructions that extract the ID of the mm_ptr and
 //   the ID of the pointee, and do the comparison.
+//
+// Note that in LLVM IR, a lot of llvm::PointerType values do not have
+// a corresponding pointer type variable in the source code. They are
+// intermediate values for the benefit of generating more friendly IR code
+// for later optimization. In this functions, variables with "_Ptr" are
+// this kind of PointerType.
 //
 void CodeGenFunction::EmitDynamicStructIDCheck(const Expr *E) {
   if (!getLangOpts().CheckedC) return;
@@ -391,47 +397,43 @@ void CodeGenFunction::EmitDynamicStructIDCheck(const Expr *E) {
   NumDynamicObjIDCheck++;
 
   // Get the LValue of the mm_ptr.
-  LValue mm_ptr_LV = isa<DeclRefExpr>(SE) ?
+  LValue MMPtrLV = isa<DeclRefExpr>(SE) ?
                          EmitDeclRefLValue(cast<DeclRefExpr>(SE)) :
                          isa<MemberExpr>(SE) ?
                          EmitMemberExpr(cast<MemberExpr>(SE)) :
                          EmitArraySubscriptExpr(cast<ArraySubscriptExpr>(SE));
+  Value *MMPtr = MMPtrLV.getAddress().getPointer();
 
-  Address mm_ptr_Addr = mm_ptr_LV.getAddress();
+  LLVMContext &Context = MMPtr->getContext();
+  // It's more convenient to use IRBuilder than CGBuilderTy.
+  llvm::IRBuilder<> InstBuilder(Builder.GetInsertBlock());
+  llvm::IntegerType *Int64Ty = llvm::Type::getInt64Ty(Context);
+  llvm::PointerType *Int64PtrTy = llvm::Type::getInt64PtrTy(Context);
+  StringRef ptrName = MMPtr->getName();
 
-  // Get the name of the variable
-  StringRef ptrName = mm_ptr_Addr.getName();
-
-  // Step 1: get the pointer to the ID field of the mm_ptr.
-  Address mm_ptr_IDAddr =
-    Builder.CreateStructGEP(mm_ptr_Addr,
-                            1,  // The ID is the second field of a mm_ptr.
-                            CharUnits::fromQuantity(8),
-                            ptrName + "_MM_ptr_ID_Ptr");
-
-  // Step 2: load the ID to an integer.
-  llvm::LoadInst *mm_ptr_ID =
-    Builder.CreateLoad(mm_ptr_IDAddr, false, ptrName + "_MM_ptr_ID");
-
-  CharUnits alignment = CharUnits::fromQuantity(8);
-
-  // Step 3: get the pointer to the ID field of the target struct.
-  Address objAddr(mm_ptr_Addr.getPointer(), alignment);
-  llvm::LoadInst *objIDPtr =
-    Builder.CreateLoad(objAddr, false, ptrName + "_Obj_Ptr");
-  Address objIDAddr =
-    Builder.CreateStructGEP(Address(objIDPtr, alignment),
-                            0,  // ID is always the first field of a struct.
-                            CharUnits::fromQuantity(0), ptrName + "_Obj_ID_Ptr");
-
-  // Step 4: load the pointee object's ID to an integer.
-  llvm::LoadInst *objID =
-    Builder.CreateLoad(objIDAddr, false, ptrName + "_Obj_ID");
+  // Step 1: get the ID inside the _MM_Ptr.
+  Value *MMPtrID_Ptr =
+    InstBuilder.CreateStructGEP(MMPtr, 1, ptrName + "_MMPtrID_Ptr");
+  LoadInst *MMPtrID = InstBuilder.CreateLoad(MMPtrID_Ptr, ptrName + "_MMPtrID");
+  // Step 2: get the raw pointer inside an _MM_ptr.
+  Value *objPtr_Ptr =
+    InstBuilder.CreateStructGEP(MMPtr, 0, ptrName + "_ObjPtr_Ptr");
+  LoadInst *objPtr = InstBuilder.CreateLoad(objPtr_Ptr, ptrName + "_ObjPtr");
+  // Step 3: cast the raw pointer to an integer, substract the size of ID,
+  // and cast the new integer to a pointer.
+  Value *objPtrInt =
+    InstBuilder.CreatePtrToInt(objPtr, Int64Ty, ptrName + "_ObjPtrToInt");
+  Value *objIDPtrInt = InstBuilder.CreateSub(objPtrInt,
+                                             ConstantInt::get(Int64Ty, 8),
+                                             ptrName + "_ObjIDPtrInt");
+  Value *objIDPtr = InstBuilder.CreateIntToPtr(objIDPtrInt, Int64PtrTy,
+                                               ptrName + "_ObjIDPtr");
+  // Step 4: get the ID of the struct object.
+  LoadInst *objID = InstBuilder.CreateLoad(objIDPtr, ptrName + "_ObjID");
 
   // Step 5: create a comparison instrution of the two IDs.
   Value *IDCheckInst =
-    Builder.CreateICmpEQ(mm_ptr_ID, objID, ptrName + "_ID_Checking");
-
+    Builder.CreateICmpEQ(MMPtrID, objID, ptrName + "_ID_Checking");
   // Step 6: emit a dynamic checking block.
   EmitDynamicCheckBlocks(IDCheckInst);
 }

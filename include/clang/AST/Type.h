@@ -2044,6 +2044,7 @@ public:
   bool isCheckedPointerNtArrayType() const;        // Checked C Nt_Array type.
   bool isCheckedPointerMMType() const;             // Checked C _MM_ptr type.
   bool isCheckedPointerMMArrayType() const;        // Checked C _MM_Array_ptr type.
+  bool isCheckedPointerMMSafeType() const;         // Checked C MM Safe ptr.
   bool isAnyPointerType() const;   // Any C pointer or ObjC object pointer
   bool isBlockPointerType() const;
   bool isVoidPointerType() const;
@@ -2698,6 +2699,10 @@ public:
 
   bool isNTChecked() const { return getKind() == CheckedPointerKind::NtArray; }
   bool isChecked() const { return getKind() != CheckedPointerKind::Unchecked; }
+  bool isMMSafeChecked() const {
+    return getKind() == CheckedPointerKind::MMPtr ||
+           getKind() == CheckedPointerKind::MMArray;
+  }
   bool isUnchecked() const { return getKind() == CheckedPointerKind::Unchecked; }
   bool isSugared() const { return false; }
   QualType desugar() const { return QualType(this, 0); }
@@ -6629,6 +6634,10 @@ inline bool Type::isCheckedPointerMMArrayType() const {
   if (const PointerType *T = getAs<PointerType>())
     return T->getKind() == CheckedPointerKind::MMArray;
   return false;
+}
+
+inline bool Type::isCheckedPointerMMSafeType() const {
+  return isCheckedPointerMMType() || isCheckedPointerMMArrayType();
 }
 
 inline bool Type::isAnyPointerType() const {
