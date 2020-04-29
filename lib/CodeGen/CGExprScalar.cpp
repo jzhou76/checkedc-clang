@@ -2112,10 +2112,9 @@ Value *ScalarExprEmitter::VisitCastExpr(CastExpr *CE) {
     if (MustVisitNullValue(E))
       (void) Visit(E);
     llvm::Type *llvmDestTy = ConvertType(DestTy);
-    if (DestTy->isCheckedPointerMMType()) {
-      // Checked C: assign an NULL to a MM_ptr.
-      return CGF.CGM.getNullPointer(
-          cast<llvm::StructType>(llvmDestTy)->getMMPtrInnerPtr(), DestTy);
+    if (DestTy->isCheckedPointerMMSafeType()) {
+      // Checked C: assign an NULL to a _MM_ptr or _MM_array_ptr.
+      return CGF.CGM.getNullPointer(llvmDestTy->getMMSafePtrInnerPtr(), DestTy);
     } else {
       return CGF.CGM.getNullPointer(cast<llvm::PointerType>(llvmDestTy), DestTy);
     }
