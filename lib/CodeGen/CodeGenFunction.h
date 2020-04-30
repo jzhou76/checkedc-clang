@@ -2938,7 +2938,7 @@ public:
                                   const BoundsExpr *CastBounds,
                                   const BoundsExpr *SubExprBounds);
   void EmitDynamicCheckBlocks(llvm::Value *Condition);
-  void EmitDynamicStructIDCheck(const Expr *E);
+  void EmitDynamicIDCheck(const Expr *E);
   llvm::BasicBlock *EmitDynamicCheckFailedBlock();
   llvm::BasicBlock *EmitNulltermWriteAdditionalCheck(const Address PtrAddr,
                                                      const Address Upper,

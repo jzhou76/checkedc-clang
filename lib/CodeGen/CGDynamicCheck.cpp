@@ -360,16 +360,16 @@ BasicBlock *CodeGenFunction::EmitDynamicCheckFailedBlock() {
 
 //
 // Checked C
-// EmitDynamicStructIDCheck()
+// EmitDynamicIDCheck()
 //
-// This method dynamically checks if the ID of a dereferenced mm_ptr
-// matches the ID of the struct object pointed to by this mm_ptr.
+// This method dynamically checks if the ID of a dereferenced _MM_ptr or
+// _MM_array_ptr matches the ID of the heap object pointed to by this pointer.
 // If they don't match, insert and jump to an llvm.trap() intrinsic.
 //
-// \param E - a clang Expr representing a dereference to a mm_ptr.
+// \param E - a clang Expr representing a dereference to a MMSafe pointer.
 //
 // Outputs:
-//   A series of IR instructions that extract the ID of the mm_ptr and
+//   A series of IR instructions that extract the ID of the MMSafe pointer and
 //   the ID of the pointee, and do the comparison.
 //
 // Note that in LLVM IR, a lot of llvm::PointerType values do not have
@@ -378,11 +378,11 @@ BasicBlock *CodeGenFunction::EmitDynamicCheckFailedBlock() {
 // for later optimization. In this functions, variables with "_Ptr" are
 // this kind of PointerType.
 //
-void CodeGenFunction::EmitDynamicStructIDCheck(const Expr *E) {
+void CodeGenFunction::EmitDynamicIDCheck(const Expr *E) {
   if (!getLangOpts().CheckedC) return;
 
   // Return if the dereference is not a _MM_ptr type.
-  if (!E->getType()->isCheckedPointerMMType()) return;
+  if (!E->getType()->isCheckedPointerMMSafeType()) return;
 
   // Double-check the type of E.
   const CastExpr *CE = dyn_cast<CastExpr>(E);
@@ -391,50 +391,55 @@ void CodeGenFunction::EmitDynamicStructIDCheck(const Expr *E) {
     assert((isa<DeclRefExpr>(SE) ||
             isa<MemberExpr>(SE) ||
             isa<ArraySubscriptExpr>(SE)) &&
-           "This MM_ptr is not a DeclRefExpr, or a MemberExpr,\
+           "This MMSafe pointer is not a DeclRefExpr, a MemberExpr,\
             or an ArraySubscriptExpr.");
 
   NumDynamicObjIDCheck++;
 
   // Get the LValue of the mm_ptr.
-  LValue MMPtrLV = isa<DeclRefExpr>(SE) ?
+  LValue MMSafePtrLV = isa<DeclRefExpr>(SE) ?
                          EmitDeclRefLValue(cast<DeclRefExpr>(SE)) :
                          isa<MemberExpr>(SE) ?
                          EmitMemberExpr(cast<MemberExpr>(SE)) :
                          EmitArraySubscriptExpr(cast<ArraySubscriptExpr>(SE));
-  Value *MMPtr = MMPtrLV.getAddress().getPointer();
+  Value *MMSafePtr = MMSafePtrLV.getAddress().getPointer();
 
-  LLVMContext &Context = MMPtr->getContext();
-  // It's more convenient to use IRBuilder than CGBuilderTy.
+  // It's more convenient to use an IRBuilder than a CGBuilderTy.
   llvm::IRBuilder<> InstBuilder(Builder.GetInsertBlock());
+  LLVMContext &Context = MMSafePtr->getContext();
   llvm::IntegerType *Int64Ty = llvm::Type::getInt64Ty(Context);
   llvm::PointerType *Int64PtrTy = llvm::Type::getInt64PtrTy(Context);
-  StringRef ptrName = MMPtr->getName();
+  StringRef ptrName = MMSafePtr->getName();
+  bool isMMPtr = E->getType()->isCheckedPointerMMType();
 
-  // Step 1: get the ID inside the _MM_Ptr.
-  Value *MMPtrID_Ptr =
-    InstBuilder.CreateStructGEP(MMPtr, 1, ptrName + "_MMPtrID_Ptr");
-  LoadInst *MMPtrID = InstBuilder.CreateLoad(MMPtrID_Ptr, ptrName + "_MMPtrID");
-  // Step 2: get the raw pointer inside an _MM_ptr.
-  Value *objPtr_Ptr =
-    InstBuilder.CreateStructGEP(MMPtr, 0, ptrName + "_ObjPtr_Ptr");
+  // Step 1: get the ID inside the MMSafe pointer.
+  Value *MMSafePtrID_Ptr =
+    InstBuilder.CreateStructGEP(MMSafePtr, 1, ptrName + "_MMSafePtrID_Ptr");
+  LoadInst *MMSafePtrID = InstBuilder.CreateLoad(MMSafePtrID_Ptr,
+                                                 ptrName + "_MMSafePtrID");
+  // Step 2: get the pointer to the ID of the memory object.
+  Value *objPtr_Ptr = InstBuilder.CreateStructGEP(MMSafePtr,
+                                                  isMMPtr ? 0 : 2,
+                                                  ptrName + "_ObjPtr_Ptr");
   LoadInst *objPtr = InstBuilder.CreateLoad(objPtr_Ptr, ptrName + "_ObjPtr");
-  // Step 3: cast the raw pointer to an integer, substract the size of ID,
-  // and cast the new integer to a pointer.
-  Value *objPtrInt =
-    InstBuilder.CreatePtrToInt(objPtr, Int64Ty, ptrName + "_ObjPtrToInt");
-  Value *objIDPtrInt = InstBuilder.CreateSub(objPtrInt,
-                                             ConstantInt::get(Int64Ty, 8),
-                                             ptrName + "_ObjIDPtrInt");
-  Value *objIDPtr = InstBuilder.CreateIntToPtr(objIDPtrInt, Int64PtrTy,
-                                               ptrName + "_ObjIDPtr");
-  // Step 4: get the ID of the struct object.
+  Value *objIDPtr = objPtr; // Assume this is processing a _MM_array_ptr.
+  if (isMMPtr) {
+    // Cast the raw pointer to an integer, substract the size of ID,
+    // and cast the new integer to a pointer.
+    Value *objPtrInt =
+      InstBuilder.CreatePtrToInt(objPtr, Int64Ty, ptrName + "_ObjPtrToInt");
+    Value *objIDPtrInt = InstBuilder.CreateSub(objPtrInt,
+                                               ConstantInt::get(Int64Ty, 8),
+                                               ptrName + "_ObjIDPtrInt");
+    objIDPtr = InstBuilder.CreateIntToPtr(objIDPtrInt, Int64PtrTy,
+                                          ptrName + "_ObjIDPtr");
+  }
+  // Step 3: get the ID of the heap object.
   LoadInst *objID = InstBuilder.CreateLoad(objIDPtr, ptrName + "_ObjID");
-
-  // Step 5: create a comparison instrution of the two IDs.
+  // Step 4: create a comparison instrution of the two IDs.
   Value *IDCheckInst =
-    Builder.CreateICmpEQ(MMPtrID, objID, ptrName + "_ID_Checking");
-  // Step 6: emit a dynamic checking block.
+    Builder.CreateICmpEQ(MMSafePtrID, objID, ptrName + "_ID_Checking");
+  // Step 5: emit a dynamic checking block.
   EmitDynamicCheckBlocks(IDCheckInst);
 }
 
