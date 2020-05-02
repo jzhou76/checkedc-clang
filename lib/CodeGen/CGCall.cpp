@@ -3878,7 +3878,7 @@ RValue CodeGenFunction::EmitCall(const CGFunctionInfo &CallInfo,
       // Checked C
       // Handle the case when a _MM_array_ptr<T> is returned by a function.
       // In this case, there could be a type mismatch between the concrete
-      // type from the caller side and the generic type from the calee side.
+      // type from the caller side and the generic type from the callee side.
       // Here we mutate the type of the concrete _MM_array_ptr to be
       // the generic one as the callee's.
       //
@@ -4127,14 +4127,15 @@ RValue CodeGenFunction::EmitCall(const CGFunctionInfo &CallInfo,
           llvm::Value *LI = Builder.CreateLoad(EltPtr);
           IRCallArgs[FirstIRArg + i] = LI;
 
-          if (STy->isMMPointerRep()) {
+          if (STy->isMMSafePointerRep()) {
             // Checked C
-            // LLVM flatterns the struct representation of _MM_ptr<T>.
-            // There would be a type mismatch between the pointer of
+            // LLVM flatterns the struct representation of an MMSafe pointer.
+            // When calling a function with generic MMSafe pointer parameters,
+            // there would be a type mismatch between the pointer of
             // the generic type (implemented as "i8*") and the concrete pointer
-            // type for _MM_ptr<T>. Here we coerce the concrete type to be
-            // the same as the generic type. Vice versa does not work because
-            // it breaks the prototype of the function.
+            // type. Here we coerce the concrete type to be the generic type.
+            // The other way around does not work because it breaks the
+            // prototype of the function.
             IRCallArgs[FirstIRArg + i]->mutateType(
                 IRFuncTy->getParamType(FirstIRArg + i));
           }
