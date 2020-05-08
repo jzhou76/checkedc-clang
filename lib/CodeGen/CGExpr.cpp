@@ -1710,18 +1710,6 @@ void CodeGenFunction::EmitStoreOfScalar(llvm::Value *Value, Address Addr,
                                         LValueBaseInfo BaseInfo,
                                         TBAAAccessInfo TBAAInfo,
                                         bool isInit, bool isNontemporal) {
-  // Checked C
-  // For a store instruction, resolve the type mismatch between a
-  // _MM_array_ptr to an array of a conrete type and a _MM_array_ptr to
-  // an array of generic type.
-  // There are three EmitStoreOfScalar(); this one is holds the real
-  // implementation and the other two call this one.
-  if (Value->getType()->isMMArrayPointerTy() &&
-      Ty->isCheckedPointerMMArrayType() &&
-      Value->getType() != Addr.getElementType()) {
-    Value->mutateType(Addr.getElementType());
-  }
-
   if (!CGM.getCodeGenOpts().PreserveVec3Type) {
     // Handle vectors differently to get better performance.
     if (Ty->isVectorType()) {
