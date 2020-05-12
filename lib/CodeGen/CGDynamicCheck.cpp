@@ -388,20 +388,25 @@ void CodeGenFunction::EmitDynamicIDCheck(const Expr *E) {
   const CastExpr *CE = dyn_cast<CastExpr>(E);
   assert(CE && "This is not a CastExpr.");
   const Expr *SE = CE->getSubExpr();
-    assert((isa<DeclRefExpr>(SE) ||
-            isa<MemberExpr>(SE) ||
-            isa<ArraySubscriptExpr>(SE)) &&
-           "This MMSafe pointer is not a DeclRefExpr, a MemberExpr,\
-            or an ArraySubscriptExpr.");
+  while (isa<ParenExpr>(SE)) {
+    // Strip parentheses around this expr.
+    SE = cast<ParenExpr>(SE)->getSubExpr();
+  }
+
+  // Get the LValue of the mm_ptr.
+  LValue MMSafePtrLV;
+  if (isa<DeclRefExpr>(SE)) {
+    MMSafePtrLV = EmitDeclRefLValue(cast<DeclRefExpr>(SE));
+  } else if (isa<MemberExpr>(SE)) {
+    MMSafePtrLV = EmitMemberExpr(cast<MemberExpr>(SE));
+  } else if (isa<ArraySubscriptExpr>(SE)) {
+    MMSafePtrLV = EmitArraySubscriptExpr(cast<ArraySubscriptExpr>(SE));
+  } else {
+    assert(0 && "Cannot recognize Expr type in EmitDynamicIDCheck()");
+  }
 
   NumDynamicObjIDCheck++;
 
-  // Get the LValue of the mm_ptr.
-  LValue MMSafePtrLV = isa<DeclRefExpr>(SE) ?
-                         EmitDeclRefLValue(cast<DeclRefExpr>(SE)) :
-                         isa<MemberExpr>(SE) ?
-                         EmitMemberExpr(cast<MemberExpr>(SE)) :
-                         EmitArraySubscriptExpr(cast<ArraySubscriptExpr>(SE));
   Value *MMSafePtr = MMSafePtrLV.getAddress().getPointer();
 
   // It's more convenient to use an IRBuilder than a CGBuilderTy.
