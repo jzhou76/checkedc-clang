@@ -2036,6 +2036,19 @@ Value *ScalarExprEmitter::VisitCastExpr(CastExpr *CE) {
       }
     }
 
+    if (DstTy->isMMSafePointerTy() && isa<llvm::ConstantPointerNull>(Src)) {
+      // Checked C
+      // We only allow casting a constant NULL pointer to an MMSafe pointer.
+      // When we compare NULL with an MMSafePtr or explicitly cast NULL to
+      // one, llvm tries to cast the NULL to the same type as the MMSafePtr.
+      // Here we need extract the inner raw pointer. For example, for
+      // "p == NULL', where p is {%struct.node*, i64}, the next few lines
+      // of code would generate "%struct.node* null" for NULL.
+      //
+      // TODO: trying casting a raw pointer to an MMSafePtr should be
+      // caught as an error much early in compilation.
+      DstTy = DstTy->getMMPtrInnerPtr();
+    }
     return Builder.CreateBitCast(Src, DstTy);
   }
   case CK_AddressSpaceConversion: {
@@ -3621,6 +3634,15 @@ Value *ScalarExprEmitter::EmitCompare(const BinaryOperator *E,
   } else if (!LHSTy->isAnyComplexType() && !RHSTy->isAnyComplexType()) {
     Value *LHS = Visit(E->getLHS());
     Value *RHS = Visit(E->getRHS());
+    // Checked C
+    // When comparing an MMSafe pointer with NULL or another MMSafe pointer,
+    // extract the inner raw pointer(s) to compare.
+    if (LHS->getType()->isMMSafePointerTy()) {
+      LHS = Builder.CreateExtractValue(LHS, 0, LHS->getName() + "_innerPtr");
+    }
+    if (RHS->getType()->isMMSafePointerTy()) {
+      RHS = Builder.CreateExtractValue(RHS, 0, RHS->getName() + "_innerPtr");
+    }
 
     // If AltiVec, the comparison results in a numeric type, so we use
     // intrinsics comparing vectors and giving 0 or 1 as a result
@@ -4337,6 +4359,13 @@ Value *CodeGenFunction::EmitScalarConversion(Value *Src, QualType SrcTy,
                                              SourceLocation Loc) {
   assert(hasScalarEvaluationKind(SrcTy) && hasScalarEvaluationKind(DstTy) &&
          "Invalid scalar expression to emit");
+  if (Src->getType()->isMMSafePointerTy()) {
+    // Checked C
+    // When implicitly comparing an MMSafe pointer with NULL, e.g.,
+    // "if (p) ...", llvm converts the pointer to an NULL. Therefore
+    // we need extract the inner raw pointer.
+    Src = Builder.CreateExtractValue(Src, 0, Src->getName() + "_innerPtr");
+  }
   return ScalarExprEmitter(*this).EmitScalarConversion(Src, SrcTy, DstTy, Loc);
 }
 
