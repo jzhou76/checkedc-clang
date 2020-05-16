@@ -8022,6 +8022,16 @@ checkPointerTypesForAssignment(Sema &S, QualType LHSType, QualType RHSType) {
     }
   }
 
+  // Checked C
+  // Check if this is assigning an unchecked pointer to an MMSafe pointer.
+  // We can do the checking earlier in the call stack, such as in
+  // Sema::CheckAssignmentOperands; however, it is cleaner to do it here.
+  if (rhkind == CheckedPointerKind::Unchecked &&
+      (lhkind == CheckedPointerKind::MMPtr ||
+       lhkind == CheckedPointerKind::MMArray)) {
+    return Sema::Incompatible;
+  }
+
   // Handle Checked C cases (where one pointer is checked).
   if (lhkind != CheckedPointerKind::Unchecked ||
       rhkind != CheckedPointerKind::Unchecked) {

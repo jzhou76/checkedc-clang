@@ -2044,9 +2044,6 @@ Value *ScalarExprEmitter::VisitCastExpr(CastExpr *CE) {
       // Here we need extract the inner raw pointer. For example, for
       // "p == NULL', where p is {%struct.node*, i64}, the next few lines
       // of code would generate "%struct.node* null" for NULL.
-      //
-      // TODO: trying casting a raw pointer to an MMSafePtr should be
-      // caught as an error much early in compilation.
       DstTy = DstTy->getMMPtrInnerPtr();
     }
     return Builder.CreateBitCast(Src, DstTy);
