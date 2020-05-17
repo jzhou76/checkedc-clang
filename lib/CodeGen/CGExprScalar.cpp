@@ -2036,15 +2036,23 @@ Value *ScalarExprEmitter::VisitCastExpr(CastExpr *CE) {
       }
     }
 
-    if (DstTy->isMMSafePointerTy() && isa<llvm::ConstantPointerNull>(Src)) {
-      // Checked C
-      // We only allow casting a constant NULL pointer to an MMSafe pointer.
-      // When we compare NULL with an MMSafePtr or explicitly cast NULL to
-      // one, llvm tries to cast the NULL to the same type as the MMSafePtr.
-      // Here we need extract the inner raw pointer. For example, for
-      // "p == NULL', where p is {%struct.node*, i64}, the next few lines
-      // of code would generate "%struct.node* null" for NULL.
-      DstTy = DstTy->getMMPtrInnerPtr();
+    if (DstTy->isMMSafePointerTy()) {
+      // Checked C:  We only allow casting a constant NULL pointer or another
+      // MMSafe pointer to an MMSafe pointer.
+      if (isa<llvm::ConstantPointerNull>(Src)) {
+        // When we compare NULL with an MMSafePtr or explicitly cast NULL to
+        // one, llvm tries to cast the NULL to the same type as the MMSafePtr.
+        // Here we need extract the inner raw pointer. For example, for
+        // "p == NULL', where p is {%struct.node*, i64}, the next few lines
+        // of code would generate "%struct.node* null" for NULL.
+        DstTy = DstTy->getMMPtrInnerPtr();
+      } else if (SrcTy->isMMSafePointerTy()) {
+        // TODO: Casting between MMSafe pointers could be dangerous.
+        // Earlier during compiling we should check to ensure the cast is safe.
+        return Builder.CreateMMSafePtrCast(Src, DstTy, Src->getName() + "_cast");
+      } else {
+        assert(0 && "Casting improper type to MMSafe pointer.");
+      }
     }
     return Builder.CreateBitCast(Src, DstTy);
   }
