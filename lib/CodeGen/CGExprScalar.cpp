@@ -2045,7 +2045,7 @@ Value *ScalarExprEmitter::VisitCastExpr(CastExpr *CE) {
         // Here we need extract the inner raw pointer. For example, for
         // "p == NULL', where p is {%struct.node*, i64}, the next few lines
         // of code would generate "%struct.node* null" for NULL.
-        DstTy = DstTy->getMMPtrInnerPtr();
+        DstTy = DstTy->getMMPtrInnerPtrTy();
       } else if (SrcTy->isMMSafePointerTy()) {
         // TODO: Casting between MMSafe pointers could be dangerous.
         // Earlier during compiling we should check to ensure the cast is safe.
@@ -2132,7 +2132,7 @@ Value *ScalarExprEmitter::VisitCastExpr(CastExpr *CE) {
     llvm::Type *llvmDestTy = ConvertType(DestTy);
     if (DestTy->isCheckedPointerMMSafeType()) {
       // Checked C: assign an NULL to a _MM_ptr or _MM_array_ptr.
-      return CGF.CGM.getNullPointer(llvmDestTy->getMMSafePtrInnerPtr(), DestTy);
+      return CGF.CGM.getNullPointer(llvmDestTy->getMMSafePtrInnerPtrTy(), DestTy);
     } else {
       return CGF.CGM.getNullPointer(cast<llvm::PointerType>(llvmDestTy), DestTy);
     }
