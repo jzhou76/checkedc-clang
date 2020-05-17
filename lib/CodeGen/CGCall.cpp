@@ -4548,18 +4548,7 @@ RValue CodeGenFunction::EmitCall(const CGFunctionInfo &CallInfo,
           // to "case TEK_Aggregate" above.
           if (V->getType()->isMMPointerTy() && RetIRTy->isMMPointerTy() &&
               V->getType() != RetIRTy) {
-              llvm::Value *genericPtr =
-                Builder.CreateExtractValue(V, 0, V->getName() + "_genericPtr");
-              llvm::Value *ID =
-                Builder.CreateExtractValue(V, 1, V->getName() + "_ID");
-              llvm::Value *concretePtr = Builder.CreateBitCast
-                (genericPtr, cast<llvm::StructType>(RetIRTy)->getElementType(0),
-                 V->getName() + "_concretePtr");
-              llvm::Value *insertPtr =
-                Builder.CreateInsertValue(llvm::UndefValue::get(RetIRTy),
-                                          concretePtr, 0,
-                                          V->getName() + "_concreteRetTmp");
-              V = Builder.CreateInsertValue(insertPtr, ID, 1,
+            V = Builder.CreateMMSafePtrCast(V, RetIRTy,
                                             V->getName() + "_concreteRet");
           }
 
