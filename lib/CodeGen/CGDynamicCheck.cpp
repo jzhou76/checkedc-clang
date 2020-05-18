@@ -381,26 +381,23 @@ BasicBlock *CodeGenFunction::EmitDynamicCheckFailedBlock() {
 void CodeGenFunction::EmitDynamicIDCheck(const Expr *E) {
   if (!getLangOpts().CheckedC) return;
 
-  // Return if the dereference is not a _MM_ptr type.
+  // Return if the dereference is neither _MM_ptr nor _MM_array_ptr type.
   if (!E->getType()->isCheckedPointerMMSafeType()) return;
 
-  // Double-check the type of E.
-  const CastExpr *CE = dyn_cast<CastExpr>(E);
-  assert(CE && "This is not a CastExpr.");
-  const Expr *SE = CE->getSubExpr();
-  while (isa<ParenExpr>(SE)) {
-    // Strip parentheses around this expr.
-    SE = cast<ParenExpr>(SE)->getSubExpr();
+  // Strip off parenthesis and casts of the Expr.
+  while (isa<ParenExpr>(E) || isa<CastExpr>(E)) {
+    E = isa<ParenExpr>(E) ? cast<ParenExpr>(E)->getSubExpr() :
+                            cast<CastExpr>(E)->getSubExpr();
   }
 
   // Get the LValue of the mm_ptr.
   LValue MMSafePtrLV;
-  if (isa<DeclRefExpr>(SE)) {
-    MMSafePtrLV = EmitDeclRefLValue(cast<DeclRefExpr>(SE));
-  } else if (isa<MemberExpr>(SE)) {
-    MMSafePtrLV = EmitMemberExpr(cast<MemberExpr>(SE));
-  } else if (isa<ArraySubscriptExpr>(SE)) {
-    MMSafePtrLV = EmitArraySubscriptExpr(cast<ArraySubscriptExpr>(SE));
+  if (isa<DeclRefExpr>(E)) {
+    MMSafePtrLV = EmitDeclRefLValue(cast<DeclRefExpr>(E));
+  } else if (isa<MemberExpr>(E)) {
+    MMSafePtrLV = EmitMemberExpr(cast<MemberExpr>(E));
+  } else if (isa<ArraySubscriptExpr>(E)) {
+    MMSafePtrLV = EmitArraySubscriptExpr(cast<ArraySubscriptExpr>(E));
   } else {
     assert(0 && "Cannot recognize Expr type in EmitDynamicIDCheck()");
   }
