@@ -48,11 +48,11 @@ public:
       // dereference an llvm::StructType.
       if (pointer->getType()->isMMPointerTy()) {
         _isMMPtr = true;
-        rawPointerTy = pointer->getType()->getMMPtrInnerPtr();
+        rawPointerTy = pointer->getType()->getMMPtrInnerPtrTy();
         pointer->mutateType(rawPointerTy);
       } else if (pointer->getType()->isMMArrayPointerTy()) {
         _isMMArrayPtr = true;
-        rawPointerTy = pointer->getType()->getMMArrayPtrInnerPtr();
+        rawPointerTy = pointer->getType()->getMMArrayPtrInnerPtrTy();
         pointer->mutateType(rawPointerTy);
       } else {
         rawPointerTy = originalPointerTy;
@@ -88,7 +88,7 @@ public:
     llvm::Type *pointerTy = getPointer()->getType();
     if (pointerTy->isMMPointerTy()) {
       // Checked C: extract the inner pointer inside an _MM_ptr.
-      return pointerTy->getMMPtrInnerPtr();
+      return pointerTy->getMMPtrInnerPtrTy();
     }
 
     return llvm::cast<llvm::PointerType>(getPointer()->getType());
