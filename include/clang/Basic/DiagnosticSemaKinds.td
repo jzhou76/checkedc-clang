@@ -9540,7 +9540,10 @@ def err_illegal_decl_mm_ptr_to_non_struct : Error<
   "only struct types are allowed">;
 
 def err_illegal_cast_to_mm_ptr : Error<
-  "'%0' cannot be cast to an MMSafe pointer %1">;
+  "%0 cannot be cast to an MMSafe pointer %1">;
+
+def err_illegal_cast_from_mm_ptr: Error<
+  "MMSafe pointer %0 cannot be cast to %1">;
 
 def err_checked_cplusplus : Error<
   "checked extension not supported for C++">;

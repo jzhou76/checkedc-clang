@@ -2726,6 +2726,14 @@ void CastOperation::CheckCStyleCast(bool IsCheckedScope) {
     SrcExpr = ExprError();
     return;
   }
+  // Disallow cast an MMSafe pointer to a non-MMSafe pointer.
+  if (SrcType->isCheckedPointerMMSafeType() &&
+      !DestType->isCheckedPointerMMSafeType()) {
+    Self.Diag(SrcExpr.get()->getExprLoc(),
+        diag::err_illegal_cast_from_mm_ptr) << SrcType << DestType;
+    SrcExpr = ExprError();
+    return;
+  }
 
   DiagnoseCastOfObjCSEL(Self, SrcExpr, DestType);
   DiagnoseCallingConvCast(Self, SrcExpr, DestType, OpRange);
