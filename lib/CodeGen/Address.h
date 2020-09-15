@@ -30,6 +30,7 @@ private:
   // Chekced C
   bool _isMMPtr = false;
   bool _isMMArrayPtr = false;
+  bool _isMMSafePtr = false;
   llvm::Type *originalPointerTy;
   llvm::Type *rawPointerTy;  // The inner pointer type of a _MM_ptr.
 
@@ -41,6 +42,7 @@ public:
     if (pointer) {
       // Backup the original _MM_ptr type.
       originalPointerTy = pointer->getType();
+      if (originalPointerTy->isMMSafePointerTy()) _isMMSafePtr = true;
 
       // Checked C: For _MM_ptr and _MM_array_ptr, set the pointer type
       // to be the inner raw pointer type. Without this mutation,
@@ -65,6 +67,9 @@ public:
 
   // Return true if this Address represents a _MM_array_ptr.
   bool isMMArrayPtr() const { return _isMMArrayPtr; }
+
+  // Return true if this Address represents a _MM_ptr or _MM_array_ptr.
+  bool isMMSafePtr() const { return _isMMSafePtr; }
 
   //  Set the pointer type to be the inner pointer type of a _MM_ptr
   //  or a _MM_array_ptr.
