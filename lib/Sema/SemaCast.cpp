@@ -2701,7 +2701,7 @@ void CastOperation::CheckCStyleCast(bool IsCheckedScope) {
       return;
     }
 
-    // Disallow cast from other Checked Pointer types to nt_arary_ptr because 
+    // Disallow cast from other Checked Pointer types to nt_arary_ptr because
     // the SrcType might not point to a NULL-terminated array.
     if (DestType->isPointerType() && DestType->isCheckedPointerNtArrayType()) {
         if (SrcType->isPointerType() && !SrcType->isCheckedPointerNtArrayType()) {
@@ -2713,6 +2713,26 @@ void CastOperation::CheckCStyleCast(bool IsCheckedScope) {
         }
     }
 
+  }
+
+  // Checked C
+  // Disallow cast a non-MMSafe pointer type to an MMSafe pointer type.
+  // JZ: What does "SrcExpr.get()->getSourceRange();" do at line 2710? The
+  // error message looks the same without this getSourceRange().
+  if (DestType->isCheckedPointerMMSafeType() &&
+      !SrcType->isCheckedPointerMMSafeType()) {
+    Self.Diag(SrcExpr.get()->getExprLoc(),
+        diag::err_illegal_cast_to_mm_ptr) << SrcType << DestType;
+    SrcExpr = ExprError();
+    return;
+  }
+  // Disallow cast an MMSafe pointer to a non-MMSafe pointer.
+  if (SrcType->isCheckedPointerMMSafeType() &&
+      !DestType->isCheckedPointerMMSafeType()) {
+    Self.Diag(SrcExpr.get()->getExprLoc(),
+        diag::err_illegal_cast_from_mm_ptr) << SrcType << DestType;
+    SrcExpr = ExprError();
+    return;
   }
 
   DiagnoseCastOfObjCSEL(Self, SrcExpr, DestType);

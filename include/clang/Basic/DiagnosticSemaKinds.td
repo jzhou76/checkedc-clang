@@ -9534,9 +9534,16 @@ def err_illegal_decl_nt_array_ptr_of_nonscalar : Error<
   "'%0' declared as _Nt_array_ptr of type %1; "
   "only integer and pointer types are allowed">;
 
+// for MMSafe pointer
 def err_illegal_decl_mm_ptr_to_non_struct : Error<
   "'%0' declared as _MM_ptr to type %1; "
   "only struct types are allowed">;
+
+def err_illegal_cast_to_mm_ptr : Error<
+  "%0 cannot be cast to an MMSafe pointer %1">;
+
+def err_illegal_cast_from_mm_ptr: Error<
+  "MMSafe pointer %0 cannot be cast to %1">;
 
 def err_checked_cplusplus : Error<
   "checked extension not supported for C++">;
@@ -9751,6 +9758,7 @@ def err_bounds_type_annotation_lost_checking : Error<
   def err_initializer_expected_for_ptr : Error<
     "automatic variable %0 with _Ptr type must have initializer">;
 
+// For MMSafe pointer
   def err_initializer_expected_for_mm_ptr : Error<
     "automatic variable %0 with _MM_ptr type must have initializer">;
 

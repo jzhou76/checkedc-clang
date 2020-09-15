@@ -1744,8 +1744,8 @@ void CodeGenFunction::EmitStoreOfScalar(llvm::Value *Value, Address Addr,
 
   llvm::Type *pointeeTy =
     cast<llvm::PointerType>(Addr.getPointer()->getType())->getElementType();
-  if (pointeeTy->isMMPointerTy() && Value->getType() != pointeeTy) {
-    // Checked C: Assign an NULL to an _MM_ptr.
+  if (pointeeTy->isMMSafePointerTy() && Value->getType() != pointeeTy) {
+    // Checked C: Assign an NULL to an _MM_ptr or _MM_array_ptr.
     // Get the Address of the inner pointer.
     Addr = Builder.CreateStructGEP(Addr, 0, CharUnits::fromQuantity(0),
                                    Addr.getName() + "_innerPtr");
@@ -2633,7 +2633,7 @@ LValue CodeGenFunction::EmitUnaryOpLValue(const UnaryOperator *E) {
                            nullptr);
 
     // Checked C: Check for Struct ID matching.
-    EmitDynamicStructIDCheck(E->getSubExpr());
+    EmitDynamicIDCheck(E->getSubExpr());
 
     // We should not generate __weak write barrier on indirect reference
     // of a pointer to object; as in void foo (__weak id *param); *param = 0;
@@ -3544,6 +3544,9 @@ LValue CodeGenFunction::EmitArraySubscriptExpr(const ArraySubscriptExpr *E,
   EmitDynamicBoundsCheck(Addr, E->getBoundsExpr(), E->getBoundsCheckKind(),
                          nullptr);
 
+  // Checked C: Dynamic ID Check on _MM_array_ptr.
+  EmitDynamicIDCheck(E->getLHS());
+
   if (getLangOpts().ObjC &&
       getLangOpts().getGC() != LangOptions::NonGC) {
     LV.setNonGC(!E->isOBJCGCCandidate(getContext()));
@@ -3841,7 +3844,7 @@ LValue CodeGenFunction::EmitMemberExpr(const MemberExpr *E) {
     // Checked C
     // Before dereferencing, do a _MM_ptr validity check.
     // TODO: add support for _MM_array_ptr.
-    EmitDynamicStructIDCheck(BaseExpr);
+    EmitDynamicIDCheck(BaseExpr);
   } else
     BaseLV = EmitCheckedLValue(BaseExpr, TCK_MemberAccess);
 
