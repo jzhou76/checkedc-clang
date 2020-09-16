@@ -1076,9 +1076,24 @@ void CodeGenFunction::EmitReturnStmt(const ReturnStmt &S) {
     Builder.CreateStore(Result.getScalarVal(), ReturnValue);
   } else {
     switch (getEvaluationKind(RV->getType())) {
-    case TEK_Scalar:
-      Builder.CreateStore(EmitScalarExpr(RV), ReturnValue);
+    case TEK_Scalar: {
+      llvm::Value *ConcreteRV = EmitScalarExpr(RV);
+      if (isa<llvm::ConstantPointerNull>(ConcreteRV) &&
+          ReturnValue.getElementType()->isMMSafePointerTy()) {
+        // Checked C
+        // Directly return a NULL when the formal return type is of
+        // MMSafe pointer. Here it extracts the inner raw pointer of the
+        // MMSafe pointer and assign NULL to it.
+        Builder.CreateStore(ConcreteRV,
+            Builder.CreateStructGEP(ReturnValue, 0,
+                                    CharUnits::fromQuantity(0),
+                                    ReturnValue.getName() + "_innerPtr"));
+      } else {
+        Builder.CreateStore(ConcreteRV, ReturnValue);
+      }
       break;
+    }
+
     case TEK_Complex:
       EmitComplexExprIntoLValue(RV, MakeAddrLValue(ReturnValue, RV->getType()),
                                 /*isInit*/ true);
