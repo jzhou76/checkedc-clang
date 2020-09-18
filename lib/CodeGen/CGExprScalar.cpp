@@ -3642,6 +3642,8 @@ Value *ScalarExprEmitter::EmitCompare(const BinaryOperator *E,
     // Checked C
     // When comparing an MMSafe pointer with NULL or another MMSafe pointer,
     // extract the inner raw pointer(s) to compare.
+    // Note we disallow directly comparing an MMSafe pointer with an integer or
+    // a raw C pointer except for NULL. This error is caught at parsing time.
     if (LHS->getType()->isMMSafePointerTy()) {
       LHS = Builder.CreateExtractValue(LHS, 0, LHS->getName() + "_innerPtr");
     }

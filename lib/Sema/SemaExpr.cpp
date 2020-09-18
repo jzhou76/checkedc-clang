@@ -10979,6 +10979,16 @@ QualType Sema::CheckCompareOperands(ExprResult &LHS, ExprResult &RHS,
     }
   } else if (LHSType->isPointerType() &&
              RHSType->isPointerType()) { // C99 6.5.8p2
+    // Checked C
+    // Disallow comparing an MMSafe pointer with a non-MMSafe pointer except
+    // for NULL.
+    if ((LHSType->isCheckedPointerMMSafeType() &&
+        !RHSType->isCheckedPointerMMSafeType() && !RHSIsNull) ||
+        (!LHSType->isCheckedPointerMMSafeType() && !LHSIsNull &&
+         RHSType->isCheckedPointerMMSafeType())) {
+      return InvalidOperands(Loc, LHS, RHS);
+    }
+
     // All of the following pointer-related warnings are GCC extensions, except
     // when handling null pointer constants.
     QualType LCanPointeeTy =
@@ -11208,6 +11218,13 @@ QualType Sema::CheckCompareOperands(ExprResult &LHS, ExprResult &RHS,
   }
   if ((LHSType->isAnyPointerType() && RHSType->isIntegerType()) ||
       (LHSType->isIntegerType() && RHSType->isAnyPointerType())) {
+    // Checked C
+    // Disallow comparing an MMSafe pointer with an integer.
+    if (LHSType->isCheckedPointerMMSafeType() ||
+        RHSType->isCheckedPointerMMSafeType()) {
+      return InvalidOperands(Loc, LHS, RHS);
+    }
+
     unsigned DiagID = 0;
     bool isError = false;
     if (LangOpts.DebuggerSupport) {
