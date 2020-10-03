@@ -2482,10 +2482,24 @@ ScalarExprEmitter::EmitScalarPrePostIncDec(const UnaryOperator *E, LValue LV,
       llvm::Value *amt = Builder.getInt32(amount);
       if (CGF.getLangOpts().isSignedOverflowDefined())
         value = Builder.CreateGEP(value, amt, "incdec.ptr");
-      else
-        value = CGF.EmitCheckedInBoundsGEP(value, amt, /*SignedIndices=*/false,
-                                           isSubtraction, E->getExprLoc(),
-                                           "incdec.ptr");
+      else {
+        // Checked C
+        // ++/-- on MMArrayPtr.
+        if (value->getType()->isMMArrayPointerTy()) {
+          Value *innerPtr =
+            Builder.CreateExtractValue(value, 0, value->getName() + "_innerPtr");
+          Value *updatedInnerPtr =
+            CGF.EmitCheckedInBoundsGEP(innerPtr, amt, isSubtraction,
+                                       /*SignedIndices=*/false,
+                                       E->getExprLoc(), "incdec.ptr");
+          value = Builder.CreateInsertValue(value, updatedInnerPtr, 0);
+
+        } else {
+          value = CGF.EmitCheckedInBoundsGEP(value, amt, /*SignedIndices=*/false,
+                                             isSubtraction, E->getExprLoc(),
+                                             "incdec.ptr");
+        }
+      }
     }
 
   // Vector increment/decrement.
