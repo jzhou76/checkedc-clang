@@ -3283,6 +3283,89 @@ static Value *emitPointerArithmetic(CodeGenFunction &CGF,
                                     op.E->getExprLoc(), "add.ptr");
 }
 
+//
+// Checked C
+// Emit pointer addition for _MM_array_ptr.
+//
+// This function extracts the inner raw pointer of the MMArrayPtr and
+// does a normal pointer addition, and creates a new MMArrayPtr with the
+// result of the addition and the ID and the object ID address from the
+// source MMArrayPtr.
+//
+static Value *emitMMArrayPointerAdd(CodeGenFunction &CGF, const BinOpInfo &op) {
+  CGBuilderTy &Builder = CGF.Builder;
+  Value *LHS = op.LHS, *RHS = op.RHS;
+  Value *Ptr = LHS->getType()->isMMArrayPointerTy() ? LHS : RHS;
+  Value *Num = LHS->getType()->isMMArrayPointerTy() ? RHS : LHS;
+  Value *rawPtr = Builder.CreateExtractValue(Ptr, 0,
+                                             Ptr->getName() + "_innerPtr");
+
+  // Create a new BinOpInfo and does a normal pointer arithmetic.
+  BinOpInfo rawPtrArithmeticOp = op;
+  rawPtrArithmeticOp.LHS = rawPtr;
+  rawPtrArithmeticOp.RHS = Num;
+  Value *Add = emitPointerArithmetic(CGF, rawPtrArithmeticOp, false);
+
+  // Extract the ID and the Addr of the ID from the Src MMArrayPtr.
+  Value *ID = Builder.CreateExtractValue(Ptr, 1);
+  Value *ObjIDPtr = Builder.CreateExtractValue(Ptr, 2);
+  // Create and return a new MMSafePtr.
+  llvm::UndefValue *Dest = llvm::UndefValue::get(Ptr->getType());
+  Value *insertNewPtr = Builder.CreateInsertValue(Dest, Add, 0);
+  Value *insertID = Builder.CreateInsertValue(insertNewPtr, ID, 1);
+  return Builder.CreateInsertValue(insertID, ObjIDPtr, 2);
+}
+
+//
+// Checked C
+// Emit pointer subtraction for _MM_array_ptr.
+//
+// For MMArrayPtr subtracting a number, this function extracts the inner
+// raw pointer and does a normal pointer subtraction, and creates a new
+// MMSafePtr with the result of the subtraction and the ID and the object ID
+// address from the source MMSafePtr.
+// For pointer subtraction between two MMArrayPtr, this function extracts
+// the raw pointers of both sides, does a normal pointer subtraction and
+// return the result.
+//
+// @param SEE - used to call ScalarExprEmitter::EmitSub() in case of this is
+//              subtraction between two MMArrayPtr.
+//
+static Value *emitMMArrayPointerSub(ScalarExprEmitter &SEE,
+                                    CodeGenFunction &CGF, const BinOpInfo &op) {
+  CGBuilderTy &Builder = CGF.Builder;
+  Value *LHS = op.LHS, *RHS = op.RHS;
+
+  BinOpInfo rawPtrArithmeticOp = op;
+  Value *rawLHS = Builder.CreateExtractValue(LHS, 0,
+                                             LHS->getName() + "_innerPtr");
+  Value *rawRHS = RHS;
+  if(RHS->getType()->isMMArrayPointerTy()) {
+    rawRHS = Builder.CreateExtractValue(RHS, 0,
+                                       RHS->getName() + "_innerPtr");
+    // If this is a subtraction between pointers, we need check if
+    // they are pointing to the same array.
+    // TO-DO: do the checking mentioned above.
+
+    rawPtrArithmeticOp.LHS = rawLHS;
+    rawPtrArithmeticOp.RHS = rawRHS;
+    return SEE.EmitSub(rawPtrArithmeticOp);
+  }
+
+  rawPtrArithmeticOp.LHS = rawLHS;
+  rawPtrArithmeticOp.RHS = rawRHS;
+  Value *Sub = emitPointerArithmetic(CGF, rawPtrArithmeticOp, true);
+
+  // Extract the ID and the Addr of the ID from the Src MMArrayPtr.
+  Value *ID = Builder.CreateExtractValue(LHS, 1);
+  Value *ObjIDPtr = Builder.CreateExtractValue(LHS, 2);
+  // Create a new MMSafePtr.
+  llvm::UndefValue *Dest = llvm::UndefValue::get(LHS->getType());
+  Value *insertNewPtr = Builder.CreateInsertValue(Dest, Sub, 0);
+  Value *insertID = Builder.CreateInsertValue(insertNewPtr, ID, 1);
+  return Builder.CreateInsertValue(insertID, ObjIDPtr, 2);
+}
+
 // Construct an fmuladd intrinsic to represent a fused mul-add of MulOp and
 // Addend. Use negMul and negAdd to negate the first operand of the Mul or
 // the add operand respectively. This allows fmuladd to represent a*b-c, or
@@ -3355,6 +3438,13 @@ Value *ScalarExprEmitter::EmitAdd(const BinOpInfo &op) {
       op.RHS->getType()->isPointerTy())
     return emitPointerArithmetic(CGF, op, CodeGenFunction::NotSubtraction);
 
+  // Checked C
+  // Emit an MMArrayPtr add.
+  if (op.LHS->getType()->isMMArrayPointerTy() ||
+      op.RHS->getType()->isMMArrayPointerTy()) {
+    return emitMMArrayPointerAdd(CGF, op);
+  }
+
   if (op.Ty->isSignedIntegerOrEnumerationType()) {
     switch (CGF.getLangOpts().getSignedOverflowBehavior()) {
     case LangOptions::SOB_Defined:
@@ -3388,6 +3478,12 @@ Value *ScalarExprEmitter::EmitAdd(const BinOpInfo &op) {
 }
 
 Value *ScalarExprEmitter::EmitSub(const BinOpInfo &op) {
+  // Checked C
+  // Emit an MMArrayPtr sub.
+  if (op.LHS->getType()->isMMArrayPointerTy()) {
+    return emitMMArrayPointerSub(*this, CGF, op);
+  }
+
   // The LHS is always a pointer if either side is.
   if (!op.LHS->getType()->isPointerTy()) {
     if (op.Ty->isSignedIntegerOrEnumerationType()) {
