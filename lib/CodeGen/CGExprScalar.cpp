@@ -3343,10 +3343,14 @@ static Value *emitMMArrayPointerSub(ScalarExprEmitter &SEE,
   if(RHS->getType()->isMMArrayPointerTy()) {
     rawRHS = Builder.CreateExtractValue(RHS, 0,
                                        RHS->getName() + "_innerPtr");
-    // If this is a subtraction between pointers, we need check if
-    // they are pointing to the same array.
-    // TO-DO: do the checking mentioned above.
+    // Check if the LHS and RHS are pointing to the same array;
+    // we disallow subtraction between MMArrayPtr to different arrays.
+    Value *IDLHS = Builder.CreateExtractValue(LHS, 1);
+    Value *IDRHS = Builder.CreateExtractValue(RHS, 1);
+    CGF.EmitDynamicCheckBlocks(Builder.CreateICmpEQ(IDLHS, IDRHS,
+                               "MMArrayPtrSubIDCheck"));
 
+    // ID checking passes. Emit a normal subtraction between two pointers.
     rawPtrArithmeticOp.LHS = rawLHS;
     rawPtrArithmeticOp.RHS = rawRHS;
     return SEE.EmitSub(rawPtrArithmeticOp);
