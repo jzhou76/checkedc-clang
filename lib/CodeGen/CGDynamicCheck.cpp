@@ -366,17 +366,17 @@ BasicBlock *CodeGenFunction::EmitDynamicCheckFailedBlock() {
 // _MM_array_ptr matches the ID of the heap object pointed to by this pointer.
 // If they don't match, insert and jump to an llvm.trap() intrinsic.
 //
-// \param E - a clang Expr representing a dereference to a MMSafe pointer.
+// \param E - a dereferenced clang Expr.
 //
 // Outputs:
 //   A series of IR instructions that extract the ID of the MMSafe pointer and
 //   the ID of the pointee, and do the comparison.
 //
 // Note that in LLVM IR, a lot of llvm::PointerType values do not have
-// a corresponding pointer type variable in the source code. They are
+// a corresponding pointer type variable defined in the source code. They are
 // intermediate values for the benefit of generating more friendly IR code
-// for later optimization. In this functions, variables with "_Ptr" are
-// this kind of PointerType.
+// for later optimization. In this function, variables with "Ptr" are
+// either this kind of PointerType or real pointers from source code.
 //
 void CodeGenFunction::EmitDynamicIDCheck(const Expr *E) {
   if (!getLangOpts().CheckedC) return;
@@ -390,7 +390,15 @@ void CodeGenFunction::EmitDynamicIDCheck(const Expr *E) {
                             cast<CastExpr>(E)->getSubExpr();
   }
 
-  // Get the LValue of the mm_ptr.
+  // Handle increment/decrement operations, e.g., *p++/-- and *++/--p.
+  if (isa<UnaryOperator>(E) &&
+      cast<UnaryOperator>(E)->isIncrementDecrementOp()) {
+    E = cast<UnaryOperator>(E)->getSubExpr();
+  }
+
+  // FIXME: Handle airhmetic expressions such as *(p +/ num).
+
+  // Get the LValue of the MMSafePtr.
   LValue MMSafePtrLV;
   if (isa<DeclRefExpr>(E)) {
     MMSafePtrLV = EmitDeclRefLValue(cast<DeclRefExpr>(E));

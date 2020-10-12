@@ -661,15 +661,17 @@ void EmitAssemblyHelper::CreatePasses(legacy::PassManager &MPM,
                            addEfficiencySanitizerPass);
   }
 
+  // Checked C
+  // Run the MMSafePtr type mismatch resolving pass.  Run this pass before
+  // the VerifierPass, otherwise the VerifierPass would fail.
+  if (CodeGenOpts.HarmonizeType) {
+    FPM.add(createHarmonizeTypePass());
+  }
+
   // Set up the per-function pass manager.
   FPM.add(new TargetLibraryInfoWrapperPass(*TLII));
   if (CodeGenOpts.VerifyModule)
     FPM.add(createVerifierPass());
-
-  /// Checked C: run the _MM_ptr type mismatch resolving pass.
-  if (CodeGenOpts.HarmonizeType) {
-    FPM.add(createHarmonizeTypePass());
-  }
 
   // Set up the per-module pass manager.
   if (!CodeGenOpts.RewriteMapFiles.empty())
