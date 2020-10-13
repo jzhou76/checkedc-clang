@@ -3303,7 +3303,7 @@ static Value *emitPointerArithmetic(CodeGenFunction &CGF,
 //
 // This function extracts the inner raw pointer of the MMArrayPtr and
 // does a normal pointer addition, and creates a new MMArrayPtr with the
-// result of the addition and the ID and the object ID address from the
+// result from the addition and the key and the lock's address from the
 // source MMArrayPtr.
 //
 static Value *emitMMArrayPointerAdd(CodeGenFunction &CGF, const BinOpInfo &op) {
@@ -3320,14 +3320,14 @@ static Value *emitMMArrayPointerAdd(CodeGenFunction &CGF, const BinOpInfo &op) {
   rawPtrArithmeticOp.RHS = Num;
   Value *Add = emitPointerArithmetic(CGF, rawPtrArithmeticOp, false);
 
-  // Extract the ID and the Addr of the ID from the Src MMArrayPtr.
-  Value *ID = Builder.CreateExtractValue(Ptr, 1);
-  Value *ObjIDPtr = Builder.CreateExtractValue(Ptr, 2);
+  // Extract the key and the address of the lock from the Src MMArrayPtr.
+  Value *key = Builder.CreateExtractValue(Ptr, 1);
+  Value *lockPtr = Builder.CreateExtractValue(Ptr, 2);
   // Create and return a new MMSafePtr.
   llvm::UndefValue *Dest = llvm::UndefValue::get(Ptr->getType());
   Value *insertNewPtr = Builder.CreateInsertValue(Dest, Add, 0);
-  Value *insertID = Builder.CreateInsertValue(insertNewPtr, ID, 1);
-  return Builder.CreateInsertValue(insertID, ObjIDPtr, 2);
+  Value *insertKey = Builder.CreateInsertValue(insertNewPtr, key, 1);
+  return Builder.CreateInsertValue(insertKey, lockPtr, 2);
 }
 
 //
@@ -3336,7 +3336,7 @@ static Value *emitMMArrayPointerAdd(CodeGenFunction &CGF, const BinOpInfo &op) {
 //
 // For MMArrayPtr subtracting a number, this function extracts the inner
 // raw pointer and does a normal pointer subtraction, and creates a new
-// MMSafePtr with the result of the subtraction and the ID and the object ID
+// MMSafePtr with the result from the subtraction and the key and the lock's
 // address from the source MMSafePtr.
 // For pointer subtraction between two MMArrayPtr, this function extracts
 // the raw pointers of both sides, does a normal pointer subtraction and
@@ -3359,12 +3359,14 @@ static Value *emitMMArrayPointerSub(ScalarExprEmitter &SEE,
                                        RHS->getName() + "_innerPtr");
     // Check if the LHS and RHS are pointing to the same array;
     // we disallow subtraction between MMArrayPtr to different arrays.
-    Value *IDLHS = Builder.CreateExtractValue(LHS, 1);
-    Value *IDRHS = Builder.CreateExtractValue(RHS, 1);
-    CGF.EmitDynamicCheckBlocks(Builder.CreateICmpEQ(IDLHS, IDRHS,
-                               "MMArrayPtrSubIDCheck"));
+    //
+    // Should this be a spatial memory safety check?
+    Value *keyLHS = Builder.CreateExtractValue(LHS, 1);
+    Value *keyRHS = Builder.CreateExtractValue(RHS, 1);
+    CGF.EmitDynamicCheckBlocks(Builder.CreateICmpEQ(keyLHS, keyRHS,
+                               "MMArrayPtrSubKeyCheck"));
 
-    // ID checking passes. Emit a normal subtraction between two pointers.
+    // Key checking passes. Emit a normal subtraction between two pointers.
     rawPtrArithmeticOp.LHS = rawLHS;
     rawPtrArithmeticOp.RHS = rawRHS;
     return SEE.EmitSub(rawPtrArithmeticOp);
@@ -3374,14 +3376,14 @@ static Value *emitMMArrayPointerSub(ScalarExprEmitter &SEE,
   rawPtrArithmeticOp.RHS = rawRHS;
   Value *Sub = emitPointerArithmetic(CGF, rawPtrArithmeticOp, true);
 
-  // Extract the ID and the Addr of the ID from the Src MMArrayPtr.
-  Value *ID = Builder.CreateExtractValue(LHS, 1);
-  Value *ObjIDPtr = Builder.CreateExtractValue(LHS, 2);
+  // Extract the key and the address of the lock from the Src MMArrayPtr.
+  Value *key = Builder.CreateExtractValue(LHS, 1);
+  Value *lockPtr = Builder.CreateExtractValue(LHS, 2);
   // Create a new MMSafePtr.
   llvm::UndefValue *Dest = llvm::UndefValue::get(LHS->getType());
   Value *insertNewPtr = Builder.CreateInsertValue(Dest, Sub, 0);
-  Value *insertID = Builder.CreateInsertValue(insertNewPtr, ID, 1);
-  return Builder.CreateInsertValue(insertID, ObjIDPtr, 2);
+  Value *insertKey = Builder.CreateInsertValue(insertNewPtr, key, 1);
+  return Builder.CreateInsertValue(insertKey, lockPtr, 2);
 }
 
 // Construct an fmuladd intrinsic to represent a fused mul-add of MulOp and

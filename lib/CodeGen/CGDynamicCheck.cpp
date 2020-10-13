@@ -29,7 +29,7 @@ namespace {
   STATISTIC(NumDynamicChecksOverflow, "The # of dynamic overflow checks found");
   STATISTIC(NumDynamicChecksRange, "The # of dynamic bounds checks found");
   STATISTIC(NumDynamicChecksCast, "The # of dynamic cast checks found");
-  STATISTIC(NumDynamicObjIDCheck, "The # of dynamic Object ID matching found");
+  STATISTIC(NumDynamicKeyCheck, "The # of dynamic Object key-lock matching found");
 }
 
 //
@@ -360,17 +360,17 @@ BasicBlock *CodeGenFunction::EmitDynamicCheckFailedBlock() {
 
 //
 // Checked C
-// EmitDynamicIDCheck()
+// EmitDynamicKeyCheck()
 //
-// This method dynamically checks if the ID of a dereferenced _MM_ptr or
-// _MM_array_ptr matches the ID of the heap object pointed to by this pointer.
+// This method dynamically checks if the key of a dereferenced _MM_ptr or
+// _MM_array_ptr matches the lock of the heap object pointed to by this pointer.
 // If they don't match, insert and jump to an llvm.trap() intrinsic.
 //
 // \param E - a dereferenced clang Expr.
 //
 // Outputs:
-//   A series of IR instructions that extract the ID of the MMSafe pointer and
-//   the ID of the pointee, and do the comparison.
+//   A series of IR instructions that extract the key from the MMSafe pointer
+//   and the lock of the pointee, and do a integer comparison.
 //
 // Note that in LLVM IR, a lot of llvm::PointerType values do not have
 // a corresponding pointer type variable defined in the source code. They are
@@ -378,7 +378,7 @@ BasicBlock *CodeGenFunction::EmitDynamicCheckFailedBlock() {
 // for later optimization. In this function, variables with "Ptr" are
 // either this kind of PointerType or real pointers from source code.
 //
-void CodeGenFunction::EmitDynamicIDCheck(const Expr *E) {
+void CodeGenFunction::EmitDynamicKeyCheck(const Expr *E) {
   if (!getLangOpts().CheckedC) return;
 
   // Return if the dereference is neither _MM_ptr nor _MM_array_ptr type.
@@ -396,7 +396,7 @@ void CodeGenFunction::EmitDynamicIDCheck(const Expr *E) {
     E = cast<UnaryOperator>(E)->getSubExpr();
   }
 
-  // FIXME: Handle airhmetic expressions such as *(p +/ num).
+  // FIXME: Handle arithmetic expressions such as *(p +/ num).
 
   // Get the LValue of the MMSafePtr.
   LValue MMSafePtrLV;
@@ -407,10 +407,10 @@ void CodeGenFunction::EmitDynamicIDCheck(const Expr *E) {
   } else if (isa<ArraySubscriptExpr>(E)) {
     MMSafePtrLV = EmitArraySubscriptExpr(cast<ArraySubscriptExpr>(E));
   } else {
-    assert(0 && "Cannot recognize Expr type in EmitDynamicIDCheck()");
+    assert(0 && "Cannot recognize Expr type in EmitDynamicKeyCheck()");
   }
 
-  NumDynamicObjIDCheck++;
+  NumDynamicKeyCheck++;
 
   Value *MMSafePtr = MMSafePtrLV.getAddress().getPointer();
 
@@ -422,35 +422,35 @@ void CodeGenFunction::EmitDynamicIDCheck(const Expr *E) {
   StringRef ptrName = MMSafePtr->getName();
   bool isMMPtr = E->getType()->isCheckedPointerMMType();
 
-  // Step 1: get the ID inside the MMSafe pointer.
-  Value *MMSafePtrID_Ptr =
-    InstBuilder.CreateStructGEP(MMSafePtr, 1, ptrName + "_MMSafePtrID_Ptr");
-  LoadInst *MMSafePtrID = InstBuilder.CreateLoad(MMSafePtrID_Ptr,
-                                                 ptrName + "_MMSafePtrID");
-  // Step 2: get the pointer to the ID of the memory object.
+  // Step 1: get the key inside the MMSafe pointer.
+  Value *MMSafePtrKey_Ptr =
+    InstBuilder.CreateStructGEP(MMSafePtr, 1, ptrName + "_MMSafePtrKey_Ptr");
+  LoadInst *MMSafePtrKey = InstBuilder.CreateLoad(MMSafePtrKey_Ptr,
+                                                 ptrName + "_MMSafePtrKey");
+  // Step 2: get the pointer to the lock of the pointed memory object.
   Value *objPtr_Ptr = InstBuilder.CreateStructGEP(MMSafePtr,
                                                   isMMPtr ? 0 : 2,
                                                   ptrName + "_ObjPtr_Ptr");
   LoadInst *objPtr = InstBuilder.CreateLoad(objPtr_Ptr, ptrName + "_ObjPtr");
-  Value *objIDPtr = objPtr; // Assume this is processing a _MM_array_ptr.
+  Value *lock_Ptr = objPtr; // Assume this is processing an _MM_array_ptr.
   if (isMMPtr) {
-    // Cast the raw pointer to an integer, substract the size of ID,
+    // Cast the raw pointer to an integer, substract the size of the lock,
     // and cast the new integer to a pointer.
     Value *objPtrInt =
       InstBuilder.CreatePtrToInt(objPtr, Int64Ty, ptrName + "_ObjPtrToInt");
-    Value *objIDPtrInt = InstBuilder.CreateSub(objPtrInt,
+    Value *lockPtrInt = InstBuilder.CreateSub(objPtrInt,
                                                ConstantInt::get(Int64Ty, 8),
-                                               ptrName + "_ObjIDPtrInt");
-    objIDPtr = InstBuilder.CreateIntToPtr(objIDPtrInt, Int64PtrTy,
-                                          ptrName + "_ObjIDPtr");
+                                               ptrName + "_lockPtrInt");
+    lock_Ptr = InstBuilder.CreateIntToPtr(lockPtrInt, Int64PtrTy,
+                                          ptrName + "_lockPtr");
   }
-  // Step 3: get the ID of the heap object.
-  LoadInst *objID = InstBuilder.CreateLoad(objIDPtr, ptrName + "_ObjID");
-  // Step 4: create a comparison instrution of the two IDs.
-  Value *IDCheckInst =
-    Builder.CreateICmpEQ(MMSafePtrID, objID, ptrName + "_ID_Checking");
+  // Step 3: get the lock of the memory object.
+  LoadInst *lock = InstBuilder.CreateLoad(lock_Ptr, ptrName + "_lock");
+  // Step 4: create a comparison instrution for the key and lock.
+  Value *keyCheckInst =
+    Builder.CreateICmpEQ(MMSafePtrKey, lock, ptrName + "_key_Checking");
   // Step 5: emit a dynamic checking block.
-  EmitDynamicCheckBlocks(IDCheckInst);
+  EmitDynamicCheckBlocks(keyCheckInst);
 }
 
 

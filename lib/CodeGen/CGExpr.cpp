@@ -2633,7 +2633,7 @@ LValue CodeGenFunction::EmitUnaryOpLValue(const UnaryOperator *E) {
                            nullptr);
 
     // Checked C: Check for Struct ID matching.
-    EmitDynamicIDCheck(E->getSubExpr());
+    EmitDynamicKeyCheck(E->getSubExpr());
 
     // We should not generate __weak write barrier on indirect reference
     // of a pointer to object; as in void foo (__weak id *param); *param = 0;
@@ -3544,8 +3544,8 @@ LValue CodeGenFunction::EmitArraySubscriptExpr(const ArraySubscriptExpr *E,
   EmitDynamicBoundsCheck(Addr, E->getBoundsExpr(), E->getBoundsCheckKind(),
                          nullptr);
 
-  // Checked C: Dynamic ID Check on _MM_array_ptr.
-  EmitDynamicIDCheck(E->getLHS());
+  // Checked C: Dynamic key-lock Check on _MM_array_ptr.
+  EmitDynamicKeyCheck(E->getLHS());
 
   if (getLangOpts().ObjC &&
       getLangOpts().getGC() != LangOptions::NonGC) {
@@ -3842,9 +3842,7 @@ LValue CodeGenFunction::EmitMemberExpr(const MemberExpr *E) {
     EmitDynamicBoundsCheck(Addr, E->getBoundsExpr(), BCK_Normal, nullptr);
 
     // Checked C
-    // Before dereferencing, do a _MM_ptr validity check.
-    // TODO: add support for _MM_array_ptr.
-    EmitDynamicIDCheck(BaseExpr);
+    EmitDynamicKeyCheck(BaseExpr);
   } else
     BaseLV = EmitCheckedLValue(BaseExpr, TCK_MemberAccess);
 
