@@ -3544,7 +3544,8 @@ LValue CodeGenFunction::EmitArraySubscriptExpr(const ArraySubscriptExpr *E,
   EmitDynamicBoundsCheck(Addr, E->getBoundsExpr(), E->getBoundsCheckKind(),
                          nullptr);
 
-  // Checked C: Dynamic key-lock Check on _MM_array_ptr.
+  // Checked C
+  // Dynamic key-lock check on _MM_array_ptr.
   EmitDynamicKeyCheck(E->getLHS());
 
   if (getLangOpts().ObjC &&
@@ -3806,7 +3807,8 @@ EmitExtVectorElementExpr(const ExtVectorElementExpr *E) {
                                   Base.getBaseInfo(), TBAAAccessInfo());
 }
 
-LValue CodeGenFunction::EmitMemberExpr(const MemberExpr *E) {
+LValue CodeGenFunction::EmitMemberExpr(const MemberExpr *E,
+                                       bool dynamicKeyCheck) {
   if (DeclRefExpr *DRE = tryToConvertMemberExprToDeclRefExpr(*this, E)) {
     EmitIgnoredExpr(E->getBase());
     return EmitDeclRefLValue(DRE);
@@ -3842,7 +3844,16 @@ LValue CodeGenFunction::EmitMemberExpr(const MemberExpr *E) {
     EmitDynamicBoundsCheck(Addr, E->getBoundsExpr(), BCK_Normal, nullptr);
 
     // Checked C
-    EmitDynamicKeyCheck(BaseExpr);
+    // When checking the validity of an inner MMSafePtr in a struct,
+    // EmitDynamicKeyCheck() would recursively call EmitMemberExpr().
+    // This dynamicKeyCheck flag is used to indicate this situtation to
+    // prevent mutual recursion, otherwise it would end up adding a
+    // redundant check on the outmost pointer and miss the real check.
+    // For example, for "p->p1->num = 10;", without this dynamicKeyCheck,
+    // p would be checked twice while p1's check would be missed.
+    if (dynamicKeyCheck) {
+      EmitDynamicKeyCheck(BaseExpr);
+    }
   } else
     BaseLV = EmitCheckedLValue(BaseExpr, TCK_MemberAccess);
 

@@ -403,7 +403,9 @@ void CodeGenFunction::EmitDynamicKeyCheck(const Expr *E) {
   if (isa<DeclRefExpr>(E)) {
     MMSafePtrLV = EmitDeclRefLValue(cast<DeclRefExpr>(E));
   } else if (isa<MemberExpr>(E)) {
-    MMSafePtrLV = EmitMemberExpr(cast<MemberExpr>(E));
+    // The second argument tells EmitMemberExpr() to not invoke
+    // EmitDynamicKeyCheck() recursively.
+    MMSafePtrLV = EmitMemberExpr(cast<MemberExpr>(E), false);
   } else if (isa<ArraySubscriptExpr>(E)) {
     MMSafePtrLV = EmitArraySubscriptExpr(cast<ArraySubscriptExpr>(E));
   } else {

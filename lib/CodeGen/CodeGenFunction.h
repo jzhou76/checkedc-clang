@@ -3563,7 +3563,7 @@ public:
   LValue EmitOMPArraySectionExpr(const OMPArraySectionExpr *E,
                                  bool IsLowerBound = true);
   LValue EmitExtVectorElementExpr(const ExtVectorElementExpr *E);
-  LValue EmitMemberExpr(const MemberExpr *E);
+  LValue EmitMemberExpr(const MemberExpr *E, bool dynamicKeyCheck = true);
   LValue EmitObjCIsaExpr(const ObjCIsaExpr *E);
   LValue EmitCompoundLiteralLValue(const CompoundLiteralExpr *E);
   LValue EmitInitListLValue(const InitListExpr *E);
