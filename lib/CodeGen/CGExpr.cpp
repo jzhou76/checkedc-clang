@@ -3375,7 +3375,8 @@ static Address emitArraySubscriptGEP(CodeGenFunction &CGF, Address addr,
 }
 
 LValue CodeGenFunction::EmitArraySubscriptExpr(const ArraySubscriptExpr *E,
-                                               bool Accessed) {
+                                               bool Accessed,
+                                               bool dynamicKeyCheck) {
   // The index must always be an integer, which is not an aggregate.  Emit it
   // in lexical order (this complexity is, sadly, required by C++17).
   llvm::Value *IdxPre =
@@ -3546,7 +3547,9 @@ LValue CodeGenFunction::EmitArraySubscriptExpr(const ArraySubscriptExpr *E,
 
   // Checked C
   // Dynamic key-lock check on _MM_array_ptr.
-  EmitDynamicKeyCheck(E->getLHS());
+  if (dynamicKeyCheck) {
+    EmitDynamicKeyCheck(E->getLHS());
+  }
 
   if (getLangOpts().ObjC &&
       getLangOpts().getGC() != LangOptions::NonGC) {

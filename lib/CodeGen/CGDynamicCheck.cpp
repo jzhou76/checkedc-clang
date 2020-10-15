@@ -407,7 +407,8 @@ void CodeGenFunction::EmitDynamicKeyCheck(const Expr *E) {
     // EmitDynamicKeyCheck() recursively.
     MMSafePtrLV = EmitMemberExpr(cast<MemberExpr>(E), false);
   } else if (isa<ArraySubscriptExpr>(E)) {
-    MMSafePtrLV = EmitArraySubscriptExpr(cast<ArraySubscriptExpr>(E));
+    MMSafePtrLV = EmitArraySubscriptExpr(cast<ArraySubscriptExpr>(E), false,
+                                         /*dynamicKeyCheck=*/false);
   } else {
     assert(0 && "Cannot recognize Expr type in EmitDynamicKeyCheck()");
   }
