@@ -2045,6 +2045,15 @@ public:
   }
   bool isArithmeticOp() const { return isArithmeticOp(getOpcode()); }
 
+  /// Checked C
+  /// Check if this is an address-of (&) operator.
+  /// The method isPrefix() is a little misleading as it only checks if
+  /// this is a prefix increment/decrement operation. The address-of operator
+  /// "&" is also a prefix operator.
+  bool isAddressOf() const {
+    return getOpcode() == UO_AddrOf;
+  }
+
   /// getOpcodeStr - Turn an Opcode enum value into the punctuation char it
   /// corresponds to, e.g. "sizeof" or "[pre]++"
   static StringRef getOpcodeStr(Opcode Op);

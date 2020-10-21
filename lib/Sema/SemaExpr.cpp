@@ -7943,8 +7943,16 @@ ExprResult Sema::ActOnConditionalOp(SourceLocation QuestionLoc,
 // routine is it effectively iqnores the qualifiers on the top level pointee.
 // This circumvents the usual type rules specified in 6.2.7p1 & 6.7.5.[1-3].
 // FIXME: add a couple examples in this comment.
+//
+// Checked C
+// In order to know if the RHS is constructed by using the '&' operator
+// to get the address of a memory object, we modifed the prototype of
+// this function to take an ExprResult for the RHS instead of a QualType.
 static Sema::AssignConvertType
-checkPointerTypesForAssignment(Sema &S, QualType LHSType, QualType RHSType) {
+checkPointerTypesForAssignment(Sema &S, QualType LHSType, ExprResult &RHS) {
+  QualType RHSType = RHS.get()->getType();
+  RHSType = S.getASTContext().getCanonicalType(RHSType).getUnqualifiedType();
+
   assert(LHSType.isCanonical() && "LHS not canonicalized!");
   assert(RHSType.isCanonical() && "RHS not canonicalized!");
 
@@ -8024,11 +8032,69 @@ checkPointerTypesForAssignment(Sema &S, QualType LHSType, QualType RHSType) {
 
   // Checked C
   // Check if this is assigning an unchecked pointer to an MMSafe pointer.
-  // We can do the checking earlier in the call stack, such as in
-  // Sema::CheckAssignmentOperands; however, it is cleaner to do it here.
+  // We disallow assigning a raw C pointer to an MMSafe pointer unless
+  // this pointer is constructed by getting the address of a memory object
+  // pointed by an MMSafe pointer. We also do not allow assigning the pointer
+  // of one type to an MMSafe pointer of another type.
+  //
+  // Another implementation choice is to do the check earlier in
+  // Sema::CheckSingleAssignmentConstraints(). In that case we do not need
+  // to modify the prototype of this function because the ExprResult of the
+  // RHS is available there.
   if (rhkind == CheckedPointerKind::Unchecked &&
       (lhkind == CheckedPointerKind::MMPtr ||
        lhkind == CheckedPointerKind::MMArray)) {
+    UnaryOperator *UO = dyn_cast<UnaryOperator>(RHS.get());
+    if (UO && UO->isAddressOf()) {
+      Expr *E = UO->getSubExpr();
+#if 0
+      // Do we want to check if the type of the pointee of the LHS matches the
+      // type of the memory object whose address is taken? Disallowing it
+      // may break some OOP style C code.
+      if (E->getType()->getUnqualifiedDesugaredType() !=
+          lhptee->getUnqualifiedDesugaredType()) {
+        return Sema::Incompatible;
+      }
+#endif
+
+      // Traverse the RHS from right to left to see if the '&' operator is
+      // applied on a inner filed of a memory object pointed by an MMSafePtr.
+      while (true) {
+        // Strip off cast and parentheses
+        while (isa<CastExpr>(E) || isa<ParenExpr>(E)) {
+          E = isa<CastExpr>(E) ? cast<CastExpr>(E)->getSubExpr() :
+                                 cast<ParenExpr>(E)->getSubExpr();
+        }
+
+        if (isa<MemberExpr>(E)) {
+          Expr *base = cast<MemberExpr>(E)->getBase();
+          if (base->getType()->isCheckedPointerMMSafeType()) {
+            return Sema::Compatible;
+          } else {
+            // Keep looking.
+            E = base;
+          }
+        } else if (isa<ArraySubscriptExpr>(E)) {
+          // Keep looking
+          E = cast<ArraySubscriptExpr>(E)->getBase();
+        } else if (isa<UnaryOperator>(E)) {
+          // In case there is a "*" operator.
+          E = cast<UnaryOperator>(E)->getSubExpr();
+        } else if (isa<DeclRefExpr>(E)) {
+          // Has reached the leftmost part of the RHS.
+          if (E->getType()->isCheckedPointerMMSafeType()) {
+            return Sema::Compatible;
+          } else {
+            return Sema::Incompatible;
+          }
+        } else {
+          // A fail-safe assertion for debugging.
+          assert(0 &&
+              "Unknown Expr in parsing the RHS for pointer assignment check.");
+        }
+      }
+    }
+
     return Sema::Incompatible;
   }
 
@@ -8402,7 +8468,7 @@ Sema::CheckAssignmentConstraints(QualType LHSType, ExprResult &RHS,
         Kind = CK_NoOp;
       else
         Kind = CK_BitCast;
-      return checkPointerTypesForAssignment(*this, LHSType, RHSType);
+      return checkPointerTypesForAssignment(*this, LHSType, RHS);
     }
 
     // int -> T*
