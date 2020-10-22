@@ -1744,9 +1744,10 @@ void CodeGenFunction::EmitStoreOfScalar(llvm::Value *Value, Address Addr,
 
   llvm::Type *pointeeTy =
     cast<llvm::PointerType>(Addr.getPointer()->getType())->getElementType();
-  if (pointeeTy->isMMSafePointerTy() && Value->getType() != pointeeTy) {
-    // Checked C: Assign an NULL to an _MM_ptr or _MM_array_ptr.
-    // Get the Address of the inner pointer.
+  if (pointeeTy->isMMSafePointerTy() && isa<llvm::ConstantPointerNull>(Value)) {
+    // Checked C
+    // Assign a NULL to an _MM_ptr or _MM_array_ptr.
+    // Create a GEP to get the inner raw pointer and make it an Address.
     Addr = Builder.CreateStructGEP(Addr, 0, CharUnits::fromQuantity(0),
                                    Addr.getName() + "_innerPtr");
   }
