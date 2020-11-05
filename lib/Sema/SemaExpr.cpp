@@ -8034,8 +8034,7 @@ checkPointerTypesForAssignment(Sema &S, QualType LHSType, ExprResult &RHS) {
   // Check if this is assigning an unchecked pointer to an MMSafe pointer.
   // We disallow assigning a raw C pointer to an MMSafe pointer unless
   // this pointer is constructed by getting the address of a memory object
-  // pointed by an MMSafe pointer. We also do not allow assigning the pointer
-  // of one type to an MMSafe pointer of another type.
+  // pointed by an MMSafe pointer.
   //
   // Another implementation choice is to do the check earlier in
   // Sema::CheckSingleAssignmentConstraints(). In that case we do not need
@@ -8047,6 +8046,7 @@ checkPointerTypesForAssignment(Sema &S, QualType LHSType, ExprResult &RHS) {
     UnaryOperator *UO = dyn_cast<UnaryOperator>(RHS.get());
     if (UO && UO->isAddressOf()) {
       Expr *E = UO->getSubExpr();
+
 #if 0
       // Do we want to check if the type of the pointee of the LHS matches the
       // type of the memory object whose address is taken? Disallowing it
@@ -8064,6 +8064,13 @@ checkPointerTypesForAssignment(Sema &S, QualType LHSType, ExprResult &RHS) {
         while (isa<CastExpr>(E) || isa<ParenExpr>(E)) {
           E = isa<CastExpr>(E) ? cast<CastExpr>(E)->getSubExpr() :
                                  cast<ParenExpr>(E)->getSubExpr();
+        }
+
+        QualType EType = E->getType();
+        if (EType->isPointerType() && !EType->isCheckedPointerMMSafeType()) {
+          // In case the '&' gets the address of an object pointed by a
+          // raw C pointer.
+          return Sema::Incompatible;
         }
 
         if (isa<MemberExpr>(E)) {
