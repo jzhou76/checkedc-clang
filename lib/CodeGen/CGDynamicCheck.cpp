@@ -378,6 +378,10 @@ BasicBlock *CodeGenFunction::EmitDynamicCheckFailedBlock() {
 // for later optimization. In this function, variables with "Ptr" are
 // either this kind of PointerType or real pointers from source code.
 //
+// FIXME: the current implementation assumes a 32-32 key-offset design for
+// _MM_ptr. In the paper we said we support at least two designs, a 32-32
+// and a 40-24. We may need to add support for the latter later.
+//
 void CodeGenFunction::EmitDynamicKeyCheck(const Expr *E) {
   if (!getLangOpts().CheckedC) return;
 
@@ -417,42 +421,53 @@ void CodeGenFunction::EmitDynamicKeyCheck(const Expr *E) {
 
   Value *MMSafePtr = MMSafePtrLV.getAddress().getPointer();
 
-  // It's more convenient to use an IRBuilder than a CGBuilderTy.
   llvm::IRBuilder<> InstBuilder(Builder.GetInsertBlock());
   LLVMContext &Context = MMSafePtr->getContext();
   llvm::IntegerType *Int64Ty = llvm::Type::getInt64Ty(Context);
-  llvm::PointerType *Int64PtrTy = llvm::Type::getInt64PtrTy(Context);
   StringRef ptrName = MMSafePtr->getName();
   bool isMMPtr = E->getType()->isCheckedPointerMMType();
 
-  // Step 1: get the key inside the MMSafe pointer.
-  Value *MMSafePtrKey_Ptr =
-    InstBuilder.CreateStructGEP(MMSafePtr, 1, ptrName + "_MMSafePtrKey_Ptr");
-  LoadInst *MMSafePtrKey = InstBuilder.CreateLoad(MMSafePtrKey_Ptr,
-                                                 ptrName + "_MMSafePtrKey");
-  // Step 2: get the pointer to the lock of the pointed memory object.
-  Value *objPtr_Ptr = InstBuilder.CreateStructGEP(MMSafePtr,
-                                                  isMMPtr ? 0 : 2,
-                                                  ptrName + "_ObjPtr_Ptr");
-  LoadInst *objPtr = InstBuilder.CreateLoad(objPtr_Ptr, ptrName + "_ObjPtr");
-  Value *lock_Ptr = objPtr; // Assume this is processing an _MM_array_ptr.
+  Value *Key = NULL;
+  Value *LockAddr = NULL;
   if (isMMPtr) {
-    // Cast the raw pointer to an integer, substract the size of the lock,
-    // and cast the new integer to a pointer.
+    // Get the KeyOffset metadata.
+    Value *OffsetKey_Ptr =
+      Builder.CreateStructGEP(MMSafePtr, 1, ptrName + "_KeyOffset_Ptr");
+    Value *KeyOffset =
+      InstBuilder.CreateLoad(OffsetKey_Ptr, ptrName + "_KeyOffset");
+    // Extract the key from the offset-key metadata
+    Key = Builder.CreateLShr(KeyOffset, 32, ptrName + "_Key");
+    // Cast the key to a 32-bit unsigned integer.
+    Key = Builder.CreateIntCast(Key, Builder.getInt32Ty(), false);
+    ConstantInt *OffsetMask = ConstantInt::get(Int64Ty, 0x00000000ffffffff);
+    Value *Offset =
+      Builder.CreateAnd(KeyOffset, OffsetMask, ptrName + "_Offset");
+    Value *objPtr_Ptr = Builder.CreateStructGEP(MMSafePtr, 0,
+                                                ptrName + "_ObjPtr_Ptr");
+    Value *objPtr = InstBuilder.CreateLoad(objPtr_Ptr, ptrName + "_ObjPtr");
     Value *objPtrInt =
-      InstBuilder.CreatePtrToInt(objPtr, Int64Ty, ptrName + "_ObjPtrToInt");
-    Value *lockPtrInt = InstBuilder.CreateSub(objPtrInt,
-                                               ConstantInt::get(Int64Ty, 8),
-                                               ptrName + "_lockPtrInt");
-    lock_Ptr = InstBuilder.CreateIntToPtr(lockPtrInt, Int64PtrTy,
-                                          ptrName + "_lockPtr");
+      Builder.CreatePtrToInt(objPtr, Int64Ty, ptrName + "_ObjPtrToInt");
+    Value *LockOffset = Builder.CreateAdd(Offset, ConstantInt::get(Int64Ty, 8));
+    Value *LockPtrInt = Builder.CreateSub(objPtrInt, LockOffset,
+                                          ptrName + "_LockPtrInt");
+    LockAddr = Builder.CreateIntToPtr(LockPtrInt,
+                                      llvm::Type::getInt32PtrTy(Context),
+                                      ptrName + "_LockPtr");
+  } else {
+    Value *Key_Ptr =
+      Builder.CreateStructGEP(MMSafePtr, 1, ptrName + "_Key_Ptr");
+    Key = InstBuilder.CreateLoad(Key_Ptr, ptrName + "_Key");
+    Value *LockPtr_Ptr =
+      Builder.CreateStructGEP(MMSafePtr, 2, ptrName + "_LockPtr_Ptr");
+    LockAddr = InstBuilder.CreateLoad(LockPtr_Ptr, ptrName + "_LockPtr");
   }
-  // Step 3: get the lock of the memory object.
-  LoadInst *lock = InstBuilder.CreateLoad(lock_Ptr, ptrName + "_lock");
-  // Step 4: create a comparison instrution for the key and lock.
+
+  // Get the lock of the memory object.
+  LoadInst *Lock = InstBuilder.CreateLoad(LockAddr, ptrName + "_Lock");
+  // Create a comparison instrution for the key and lock.
   Value *keyCheckInst =
-    Builder.CreateICmpEQ(MMSafePtrKey, lock, ptrName + "_key_Checking");
-  // Step 5: emit a dynamic checking block.
+    Builder.CreateICmpEQ(Key, Lock, ptrName + "_Key_Checking");
+  // Emit a dynamic checking block.
   EmitDynamicCheckBlocks(keyCheckInst);
 }
 

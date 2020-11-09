@@ -2018,6 +2018,7 @@ QualType Sema::BuildPointerType(QualType T, CheckedPointerKind kind,
     return QualType();
   }
 
+#if 0
   // Checked C: _MM_ptr is only allowed to point to struct types.
   // One special case is when a _MM_ptr is in a generic function, the
   // type of its pointee is allowed to be a TypeVariableType.
@@ -2027,6 +2028,7 @@ QualType Sema::BuildPointerType(QualType T, CheckedPointerKind kind,
       << getPrintableNameForEntity(Entity) << T;
     return QualType();
   }
+#endif
 
   // Build the pointer type.
   return Context.getPointerType(T, kind);

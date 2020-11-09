@@ -40,6 +40,9 @@
 using namespace clang;
 using namespace CodeGen;
 using llvm::Value;
+using llvm::GetElementPtrInst;
+using llvm::StructType;
+using llvm::ConstantInt;
 
 //===----------------------------------------------------------------------===//
 //                         Scalar Expression Emitter
@@ -595,7 +598,159 @@ public:
     if (isa<MemberPointerType>(E->getType())) // never sugared
       return CGF.CGM.getMemberPointerConstant(E);
 
-    return EmitLValue(E->getSubExpr()).getPointer();
+    Value *result = EmitLValue(E->getSubExpr()).getPointer();
+
+    // Checked C
+    // If the '&' operator gets the address of an object inside an object
+    // pointed by an MMSafe pointer, the result should be assigned to
+    // an MMSafe pointer with the same key and the offset of the inner object.
+    // The following code checks if it is this case and if so constructs
+    // and returns an MMSafe pointer.
+
+    if (isa<GetElementPtrInst>(result)) {
+      // This Expr gets the address of an object in astruct or an array.
+      Expr *e = E->getSubExpr();
+      bool hasMMSafePtrExpr = false;
+
+      // Do a right-to left traversal of the Expr to see if the '&' gets the
+      // address from an object pointed by an MMSafe Pointer.
+      bool reachedTop = false;  // The parsing has reached to the top left.
+      while (!reachedTop) {
+        // Strip off casts and parenthese.
+        while (isa<CastExpr>(e) || isa<ParenExpr>(e)) {
+          e = isa<CastExpr>(e) ? cast<CastExpr>(e)->getSubExpr() :
+                                 cast<ParenExpr>(e)->getSubExpr();
+        }
+
+        switch (e->getStmtClass()) {
+          case Expr::MemberExprClass:
+            e = cast<MemberExpr>(e)->getBase();
+            break;
+          case Expr::ArraySubscriptExprClass:
+            e = cast<ArraySubscriptExpr>(e)->getBase();
+            break;
+          case Expr::UnaryOperatorClass:
+            e = cast<UnaryOperator>(e)->getSubExpr();
+            break;
+          case Expr::DeclRefExprClass:
+            reachedTop = true;
+            break;
+          default:
+            assert(0 && "Unknown Expr in parsing a UnaryOperator.");
+            break;
+        }
+
+        if (e->getType()->isCheckedPointerMMSafeType()) {
+          hasMMSafePtrExpr = true;
+          break;
+        }
+      }
+
+      // Return the result if no MMSafe pointer is found in the access chain.
+      if (!hasMMSafePtrExpr) return result;
+
+      // Start to compute the offset of the inner object.
+      const llvm::DataLayout &DL = CGF.CGM.getDataLayout();
+      GetElementPtrInst *GEP = cast<GetElementPtrInst>(result);
+      Value *GEPPtr = GEP->getPointerOperand();
+      llvm::Type *GEPPtrElemType =
+        cast<llvm::PointerType>(GEPPtr->getType())->getElementType();
+
+      // Traverse the result LValue backwards to calculate the offset.
+      Value *Offset = Builder.getInt64(0);
+      while (true) {
+        // FIXME: Theoretically an GEP instruction can have arbitrary number
+        // of indices, but it usually has one or two.  The example in the doc:
+        // https://llvm.org/docs/LangRef.html#getelementptr-instruction
+        // has 5 indices but semantically it can be divided to multiple
+        // 2-index GEP.  Now we just assume it has two.
+        // We'll fix it later if this assert is ever triggered.
+        assert(GEP->getNumIndices() < 3 &&
+            "This GEP of StructType has more than 2 indices.");
+
+        // Get the index of the struct or array.
+        Value *Index = GEP->getNumIndices() == 1 ? GEP->getOperand(1)
+                                                 : GEP->getOperand(2);
+        if(isa<StructType>(GEPPtrElemType)) {
+          // Compute the offset in the struct.
+
+          // TO-DO: If the first index is not 0, add sizeof(struct) * firstIdx
+          // to Offset.
+          ConstantInt *firstIdx = cast<ConstantInt>(GEP->getOperand(1));
+          if (!firstIdx->isZero()) {
+            assert(0 && "The first index is not zero.");
+          }
+
+          const llvm::StructLayout *SL =
+            DL.getStructLayout(cast<StructType>(GEPPtrElemType));
+          uint64_t IdxOfStruct =
+            cast<ConstantInt>(Index)->getZExtValue();
+          ConstantInt *offsetOfStruct =
+            Builder.getInt64(SL->getElementOffset(IdxOfStruct));
+          Offset = Builder.CreateAdd(Offset, offsetOfStruct);
+        } else if (isa<llvm::ArrayType>(GEPPtrElemType)) {
+          // Compute the offset in the array.
+          llvm::ArrayType *ArrType = cast<llvm::ArrayType>(GEPPtrElemType);
+          ConstantInt *ArrayElemSize =
+            Builder.getInt64(DL.getTypeAllocSize(ArrType->getElementType()));
+          Value *ArrayOffset = Builder.CreateMul(Index, ArrayElemSize);
+          Offset = Builder.CreateAdd(Offset, ArrayOffset);
+        } else {
+          assert(0 && "Unknown GEP Element Type");
+        }
+
+        if (isa<llvm::LoadInst>(GEPPtr)) {
+          // The GEP's pointer is a Load. This should be a load that loads
+          // from a pointer to an MMSafe pointer because if the program can
+          // reach this point it means there is an MMSafe pointer in the
+          // access chain of the '&' expression and this MMSafe pointer is
+          // the rightmost pointer. Anyway, let's add one assert for safety.
+          Value *MMSafePtr_Ptr =
+            cast<llvm::LoadInst>(GEPPtr)->getPointerOperand();
+          assert(cast<llvm::PointerType>(
+                MMSafePtr_Ptr->getType())->getElementType()->isMMSafePointerTy()
+              && "Not loading an MMSafe pointer.");
+          StringRef ptrName = MMSafePtr_Ptr->getName();
+          Value *KeyOffsetSrcPtr =
+            Builder.CreateStructGEP(MMSafePtr_Ptr, 1, ptrName + "_KeyOffsetPtr");
+          Value *KeyOffsetSrc =
+            Builder.CGBuilderBaseTy::CreateLoad(KeyOffsetSrcPtr,
+                                                ptrName + "_KeyOffset");
+          Value *KeyOffsetDest =
+            Builder.CreateAdd(KeyOffsetSrc, Offset, ptrName + "_KeyOffsetDest");
+
+          // Use UndefValue to create a new MMSafe pointer.
+          StructType *MMPtrType =
+            StructType::get(result->getType(), KeyOffsetSrc->getType());
+          llvm::UndefValue *newRet = llvm::UndefValue::get(MMPtrType);
+          Value *insertPtr = Builder.CreateInsertValue(newRet, result, 0);
+          return Builder.CreateInsertValue(insertPtr, KeyOffsetDest, 1);
+        } else {
+          assert(isa<GetElementPtrInst>(GEPPtr) && "Not a GEP");
+
+          // Keep traversing to the left.
+          GEP = cast<GetElementPtrInst>(GEPPtr);
+          GEPPtr = GEP->getPointerOperand();
+          GEPPtrElemType =
+            cast<llvm::PointerType>(GEPPtr->getType())->getElementType();
+        }
+      }
+    } else {
+      // This Expr directly gets the address of a variable, e.g., p = &obj;.
+      if (isa<llvm::LoadInst>(result)) {
+        // This should be an Expr like &*p.
+        llvm::LoadInst *Load = cast<llvm::LoadInst>(result);
+        Value *LoadPtr = Load->getPointerOperand();
+        if (cast<llvm::PointerType>(LoadPtr->getType())
+            ->getElementType()->isMMSafePointerTy()) {
+          // This is an Expr like &*p where p is an MMSafe pointer.
+          return Builder.CGBuilderBaseTy::CreateLoad(LoadPtr);
+        }
+      }
+    }
+
+    // For all other cases, return the result.
+    return result;
   }
   Value *VisitUnaryDeref(const UnaryOperator *E) {
     if (E->getType()->isVoidType())
