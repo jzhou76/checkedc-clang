@@ -8067,37 +8067,30 @@ checkPointerTypesForAssignment(Sema &S, QualType LHSType, ExprResult &RHS) {
         }
 
         QualType EType = E->getType();
-        if (EType->isPointerType() && !EType->isCheckedPointerMMSafeType()) {
+        if (EType->isCheckedPointerMMSafeType()) {
+          return Sema::Compatible;
+        } else if (EType->isPointerType()) {
           // In case the '&' gets the address of an object pointed by a
           // raw C pointer.
           return Sema::Incompatible;
         }
 
-        if (isa<MemberExpr>(E)) {
-          Expr *base = cast<MemberExpr>(E)->getBase();
-          if (base->getType()->isCheckedPointerMMSafeType()) {
-            return Sema::Compatible;
-          } else {
-            // Keep looking.
-            E = base;
-          }
-        } else if (isa<ArraySubscriptExpr>(E)) {
-          // Keep looking
-          E = cast<ArraySubscriptExpr>(E)->getBase();
-        } else if (isa<UnaryOperator>(E)) {
-          // In case there is a "*" operator.
-          E = cast<UnaryOperator>(E)->getSubExpr();
-        } else if (isa<DeclRefExpr>(E)) {
-          // Has reached the leftmost part of the RHS.
-          if (E->getType()->isCheckedPointerMMSafeType()) {
-            return Sema::Compatible;
-          } else {
+        switch(E->getStmtClass()) {
+          case Expr::MemberExprClass:
+            E = cast<MemberExpr>(E)->getBase();
+            break;
+          case Expr::ArraySubscriptExprClass:
+            E = cast<ArraySubscriptExpr>(E)->getBase();
+            break;
+          case Expr::UnaryOperatorClass:
+            E = cast<UnaryOperator>(E)->getSubExpr();
+            break;
+          case Expr::DeclRefExprClass:
+            // Reached the top of the Expr.
             return Sema::Incompatible;
-          }
-        } else {
-          // A fail-safe assertion for debugging.
-          assert(0 &&
-              "Unknown Expr in parsing the RHS for pointer assignment check.");
+          default:
+            assert(0 && "Unknown Expr");
+            break;
         }
       }
     }
