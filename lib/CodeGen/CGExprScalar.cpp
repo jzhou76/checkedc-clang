@@ -2200,7 +2200,7 @@ Value *ScalarExprEmitter::VisitCastExpr(CastExpr *CE) {
         // Here we need extract the inner raw pointer. For example, for
         // "p == NULL', where p is {%struct.node*, i64}, the next few lines
         // of code would generate "%struct.node* null" for NULL.
-        DstTy = DstTy->getMMPtrInnerPtrTy();
+        DstTy = DstTy->getMMSafePtrInnerPtrTy();
       } else if (SrcTy->isMMSafePointerTy()) {
         // TODO: Casting between MMSafe pointers could be dangerous.
         // Earlier during compiling we should check to ensure the cast is safe.
