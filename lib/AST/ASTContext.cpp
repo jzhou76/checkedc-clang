@@ -9652,7 +9652,8 @@ bool ASTContext::isEqualIgnoringChecked(QualType T1, QualType T2) const {
 // specification.
 bool ASTContext::isNotAllowedForNoPrototypeFunction(QualType QT) const {
   if (const PointerType *PT = QT->getAs<PointerType>()) {
-    // Checked C & FIXME: Checked C does not allow the return typf of a
+    // Checked C
+    // FIXME: Checked C does not allow the return typf of a
     // no-prototype function to be a spatial memory safe pointer.
     // Currently, for the sake of easy development, we allow MMSafe pointers
     // to be returnd by a no-prototype function. Since the MMSafe pointer

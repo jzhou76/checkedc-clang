@@ -30,9 +30,10 @@ private:
   // Chekced C
   bool _isMMPtr = false;
   bool _isMMArrayPtr = false;
+  bool _isMMLargePtr = false;
   bool _isMMSafePtr = false;
   llvm::Type *originalPointerTy;
-  llvm::Type *rawPointerTy;  // The inner pointer type of a _MM_ptr.
+  llvm::Type *rawPointerTy;  // The inner pointer type of an MMSafe pointer.
 
 public:
   Address(llvm::Value *pointer, CharUnits alignment)
@@ -44,19 +45,24 @@ public:
       originalPointerTy = pointer->getType();
       if (originalPointerTy->isMMSafePointerTy()) _isMMSafePtr = true;
 
-      // Checked C: For _MM_ptr and _MM_array_ptr, set the pointer type
-      // to be the inner raw pointer type. Without this mutation,
-      // pointer dereference would fail because the compiler would try to
-      // dereference an llvm::StructType.
-      if (pointer->getType()->isMMPointerTy()) {
+      // Checked C
+      // For an MMSafe pointer, set the pointer type to be the inner raw
+      // pointer type. Without this mutation, pointer dereference would fail
+      // because the compiler would try to dereference an llvm::StructType.
+      // The CheckedCHarmonizeTypePass fixed the problem caused by the mutation.
+      llvm::Type *pointerType = pointer->getType();
+      if (pointerType->isMMPointerTy()) {
         _isMMPtr = true;
-        rawPointerTy = pointer->getType()->getMMPtrInnerPtrTy();
+        rawPointerTy = pointerType->getMMPtrInnerPtrTy();
         pointer->mutateType(rawPointerTy);
-      } else if (pointer->getType()->isMMArrayPointerTy()) {
+      } else if (pointerType->isMMArrayPointerTy()) {
         _isMMArrayPtr = true;
-        rawPointerTy = pointer->getType()->getMMArrayPtrInnerPtrTy();
+        rawPointerTy = pointerType->getMMArrayPtrInnerPtrTy();
         pointer->mutateType(rawPointerTy);
-      } else {
+      } else if (pointerType->isMMLargePointerTy()) {
+        rawPointerTy = pointerType->getMMLargePtrInnerPtrTy();
+        pointer->mutateType(rawPointerTy);
+      }else {
         rawPointerTy = originalPointerTy;
       }
     }
@@ -68,14 +74,11 @@ public:
   // Return true if this Address represents a _MM_array_ptr.
   bool isMMArrayPtr() const { return _isMMArrayPtr; }
 
+  // Return true if this Address represents a _MM_large_ptr.
+  bool isMMLargePtr() const { return _isMMLargePtr; }
+
   // Return true if this Address represents a _MM_ptr or _MM_array_ptr.
   bool isMMSafePtr() const { return _isMMSafePtr; }
-
-  //  Set the pointer type to be the inner pointer type of a _MM_ptr
-  //  or a _MM_array_ptr.
-  void mutatePointerType() {
-    if (isMMPtr() || isMMArrayPtr()) Pointer->mutateType(rawPointerTy);
-  }
 
   // Restore the original _MM_ptr or _MM_array type.
   void restoreMMPtrType() { Pointer->mutateType(originalPointerTy); }
@@ -92,11 +95,12 @@ public:
   llvm::PointerType *getType() const {
     llvm::Type *pointerTy = getPointer()->getType();
     if (pointerTy->isMMPointerTy()) {
-      // Checked C: extract the inner pointer inside an _MM_ptr.
+      // Checked C
+      // Extract the inner pointer inside an _MM_ptr.
       return pointerTy->getMMPtrInnerPtrTy();
     }
 
-    return llvm::cast<llvm::PointerType>(getPointer()->getType());
+    return llvm::cast<llvm::PointerType>(pointerTy);
   }
 
   /// Return the type of the values stored in this address.

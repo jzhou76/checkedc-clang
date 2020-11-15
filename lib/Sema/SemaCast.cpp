@@ -2717,8 +2717,8 @@ void CastOperation::CheckCStyleCast(bool IsCheckedScope) {
 
   // Checked C
   // Disallow cast a non-MMSafe pointer type to an MMSafe pointer type.
-  // JZ: What does "SrcExpr.get()->getSourceRange();" do at line 2710? The
-  // error message looks the same without this getSourceRange().
+  // Jie Zhou: What does "SrcExpr.get()->getSourceRange();" do at line 2710?
+  // The error message looks the same without this getSourceRange().
   if (DestType->isCheckedPointerMMSafeType() &&
       !SrcType->isCheckedPointerMMSafeType()) {
     Self.Diag(SrcExpr.get()->getExprLoc(),

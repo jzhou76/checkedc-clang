@@ -83,6 +83,7 @@ namespace clang {
     TST_ntarrayPtr ,  // Chcecked C _Nt_array_ptr type
     TST_mmPtr,        // Checked C _MM_ptr type
     TST_mmarrayPtr,   // Checked C _MM_array_ptr type
+    TST_mmlargePtr,   // Checked C _MM_large_ptr type
 #define GENERIC_IMAGE_TYPE(ImgType, Id) TST_##ImgType##_t, // OpenCL image types
 #include "clang/Basic/OpenCLImageTypes.def"
     TST_error // erroneous type

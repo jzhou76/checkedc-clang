@@ -1081,9 +1081,9 @@ void CodeGenFunction::EmitReturnStmt(const ReturnStmt &S) {
       if (isa<llvm::ConstantPointerNull>(ConcreteRV) &&
           ReturnValue.getElementType()->isMMSafePointerTy()) {
         // Checked C
-        // Directly return a NULL when the formal return type is of
-        // MMSafe pointer. Here it extracts the inner raw pointer of the
-        // MMSafe pointer and assign NULL to it.
+        // When the formal return type is of MMSafe pointer and the function
+        // directly returns a NULL, here it extracts the inner raw pointer of
+        // the destination MMSafe pointer and assign NULL to it.
         Builder.CreateStore(ConcreteRV,
             Builder.CreateStructGEP(ReturnValue, 0,
                                     CharUnits::fromQuantity(0),

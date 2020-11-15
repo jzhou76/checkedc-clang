@@ -362,8 +362,8 @@ BasicBlock *CodeGenFunction::EmitDynamicCheckFailedBlock() {
 // Checked C
 // EmitDynamicKeyCheck()
 //
-// This method dynamically checks if the key of a dereferenced _MM_ptr or
-// _MM_array_ptr matches the lock of the heap object pointed to by this pointer.
+// This method dynamically checks if the key of a dereferenced MMSafe pointer
+// matches the lock of the heap object pointed to by this pointer.
 // If they don't match, insert and jump to an llvm.trap() intrinsic.
 //
 // \param E - a dereferenced clang Expr.
@@ -425,11 +425,10 @@ void CodeGenFunction::EmitDynamicKeyCheck(const Expr *E) {
   LLVMContext &Context = MMSafePtr->getContext();
   llvm::IntegerType *Int64Ty = llvm::Type::getInt64Ty(Context);
   StringRef ptrName = MMSafePtr->getName();
-  bool isMMPtr = E->getType()->isCheckedPointerMMType();
 
   Value *Key = NULL;
   Value *LockAddr = NULL;
-  if (isMMPtr) {
+  if (!E->getType()->isCheckedPointerMMLargeType()) {
     // Get the KeyOffset metadata.
     Value *OffsetKey_Ptr =
       Builder.CreateStructGEP(MMSafePtr, 1, ptrName + "_KeyOffset_Ptr");

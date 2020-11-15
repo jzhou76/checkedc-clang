@@ -8042,7 +8042,8 @@ checkPointerTypesForAssignment(Sema &S, QualType LHSType, ExprResult &RHS) {
   // RHS is available there.
   if (rhkind == CheckedPointerKind::Unchecked &&
       (lhkind == CheckedPointerKind::MMPtr ||
-       lhkind == CheckedPointerKind::MMArray)) {
+       lhkind == CheckedPointerKind::MMArray ||
+       lhkind == CheckedPointerKind::MMLarge)) {
     UnaryOperator *UO = dyn_cast<UnaryOperator>(RHS.get());
     if (UO && UO->isAddressOf()) {
       Expr *E = UO->getSubExpr();

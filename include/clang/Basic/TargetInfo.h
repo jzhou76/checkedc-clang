@@ -353,23 +353,23 @@ public:
     return AddrSpace == 0 ? PointerAlign : getPointerAlignV(AddrSpace);
   }
   /// Checked C
-  /// MM pointers are fat pointers; so their lengths are greater than
+  /// MMSafe pointers are fat pointers, and their lengths are greater than
   /// PointerWdith and their alignments are greater than PointerAlign.
   ///
   /// FIXME: Currently we only implement for the x86-64 architecture;
-  /// so we fix the width and alginment of MM pointers to 16 bytes
-  /// and 16 bytes for struct, and 24 bytes and 32 bytes for arrays.
+  /// so we fix the width and alginment of MMSafe pointers to 16 bytes
+  /// and 16 bytes for _MM_ptr and _MM_array_ptr, and 24 bytes and 32 bytes
+  /// for _MM_large_ptr.
   /// Later if we want to support more architectures we need change
   /// this function.
   ///
   uint64_t getPointerWidth(unsigned AddrSpace, const clang::Type *T) const {
-    /// The magic number 64 means the lenght of the key of a MMSafe pointer.
-    return T->isCheckedPointerMMType() ? PointerWidth + 64 :
-                                         PointerWidth * 2 + 64;
+    return T->isCheckedPointerMMLargeType() ? PointerWidth + 128 :
+                                              PointerWidth + 64;
   }
   uint64_t getPointerAlign(unsigned AddrSpace, const clang::Type *T) const {
-    return T->isCheckedPointerMMType() ? PointerAlign * 2 :
-                                         PointerAlign * 4;
+    return T->isCheckedPointerMMLargeType() ? PointerAlign * 4 :
+                                              PointerAlign * 2;
   }
 
   /// Return the maximum width of pointers on this target.

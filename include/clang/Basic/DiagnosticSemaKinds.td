@@ -9534,7 +9534,7 @@ def err_illegal_decl_nt_array_ptr_of_nonscalar : Error<
   "'%0' declared as _Nt_array_ptr of type %1; "
   "only integer and pointer types are allowed">;
 
-// for MMSafe pointer
+// for MMSafe pointers
 def err_illegal_decl_mm_ptr_to_non_struct : Error<
   "'%0' declared as _MM_ptr to type %1; "
   "only struct types are allowed">;
@@ -9764,6 +9764,9 @@ def err_bounds_type_annotation_lost_checking : Error<
 
   def err_initializer_expected_for_mm_array_ptr : Error<
     "automatic variable %0 with _MM_array_ptr type must have initializer">;
+
+  def err_initializer_expected_for_mm_large_ptr : Error<
+    "automatic variable %0 with _MM_large_ptr type must have initializer">;
 
   def err_initializer_not_null_terminated_for_nt_checked : Error<
     "null terminator expected in _Nt_checked array initializer">;

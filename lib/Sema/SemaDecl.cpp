@@ -12223,6 +12223,9 @@ void Sema::ActOnUninitializedDecl(Decl *RealDecl) {
       else if (Ty->isCheckedPointerMMArrayType())
         Diag(Var->getLocation(), diag::err_initializer_expected_for_mm_array_ptr)
           << Var;
+      else if (Ty->isCheckedPointerMMLargeType())
+        Diag(Var->getLocation(), diag::err_initializer_expected_for_mm_large_ptr)
+          << Var;
 
       // An unchecked pointer in a checked scope with a bounds expression must
       // be initialized

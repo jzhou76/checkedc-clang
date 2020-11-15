@@ -370,6 +370,7 @@ bool Declarator::isDeclarationOfFunction() const {
     case TST_ntarrayPtr:
     case TST_mmPtr:
     case TST_mmarrayPtr:
+    case TST_mmlargePtr:
 #define GENERIC_IMAGE_TYPE(ImgType, Id) case TST_##ImgType##_t:
 #include "clang/Basic/OpenCLImageTypes.def"
       return false;
@@ -582,6 +583,7 @@ const char *DeclSpec::getSpecifierName(DeclSpec::TST T,
   case DeclSpec::TST_nt_arrayPtr: return "_Nt_array_ptr";
   case DeclSpec::TST_mmPtr: return "_MM_ptr";
   case DeclSpec::TST_mmarrayPtr: return "_MM_array_ptr";
+  case DeclSpec::TST_mmlargePtr: return "_MM_large_ptr";
 #define GENERIC_IMAGE_TYPE(ImgType, Id) \
   case DeclSpec::TST_##ImgType##_t: \
     return #ImgType "_t";

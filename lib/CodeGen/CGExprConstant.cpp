@@ -1677,7 +1677,7 @@ llvm::Constant *ConstantLValueEmitter::tryEmit() {
   auto destTy = CGM.getTypes().ConvertTypeForMem(DestType);
   if (destTy->isMMSafePointerTy()) {
     // Checked C
-    // Handling assigning NULL to an array of _MM_ptr or _MM_array_ptr.
+    // Handling assigning NULL to an array of MMSafe pointers.
     destTy = cast<llvm::StructType>(destTy)->getMMSafePtrInnerPtrTy();
   }
   assert(isa<llvm::IntegerType>(destTy) || isa<llvm::PointerType>(destTy));

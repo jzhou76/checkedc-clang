@@ -1393,9 +1393,11 @@ enum class AutoTypeKeyword {
 ///     arithmetic.  It has overflow checking.
 ///   4. Checked C _Nt_Array_ptr: these are pointers to null-terminated arrays.
 ///   5. Checked C _MM_ptr: these are memory-managment-safe pointers to
-///      struct objects. No pointer arithmetic is allowed.
+///      singleton objects. No pointer arithmetic is allowed.
 ///   6. Checked C _MM_Array_ptr: these are memory-managment-safe pointers to
-///      array objects. Pointer arithmetic is allowed.
+///      array objects whose size is within 4GB. Pointer arithmetic is allowed.
+///   7. Checked C _MM_Large_ptr: these are memory-managment-safe pointers to
+///      array objects no less than than 4GB. Pointer arithmetic is allowed.
 ///
 enum class CheckedPointerKind {
   /// \brief Unchecked C pointer.
@@ -1410,6 +1412,8 @@ enum class CheckedPointerKind {
   MMPtr,
   /// Checked C _MM_Array_ptr type.
   MMArray,
+  /// Checked C _MM_Large_ptr type.
+  MMLarge,
 };
 
 /// Checked C generalizes arrays to 3 different kinds of arrays.
@@ -2044,6 +2048,7 @@ public:
   bool isCheckedPointerNtArrayType() const;        // Checked C Nt_Array type.
   bool isCheckedPointerMMType() const;             // Checked C _MM_ptr type.
   bool isCheckedPointerMMArrayType() const;        // Checked C _MM_Array_ptr type.
+  bool isCheckedPointerMMLargeType() const;        // Checked C _MM_Large_ptr type.
   bool isCheckedPointerMMSafeType() const;         // Checked C MM Safe ptr.
   bool isAnyPointerType() const;   // Any C pointer or ObjC object pointer
   bool isBlockPointerType() const;
@@ -2701,7 +2706,8 @@ public:
   bool isChecked() const { return getKind() != CheckedPointerKind::Unchecked; }
   bool isMMSafeChecked() const {
     return getKind() == CheckedPointerKind::MMPtr ||
-           getKind() == CheckedPointerKind::MMArray;
+           getKind() == CheckedPointerKind::MMArray ||
+           getKind() == CheckedPointerKind::MMLarge;
   }
   bool isUnchecked() const { return getKind() == CheckedPointerKind::Unchecked; }
   bool isSugared() const { return false; }
@@ -6636,8 +6642,15 @@ inline bool Type::isCheckedPointerMMArrayType() const {
   return false;
 }
 
+inline bool Type::isCheckedPointerMMLargeType() const {
+  if (const PointerType *T = getAs<PointerType>())
+    return T->getKind() == CheckedPointerKind::MMLarge;
+  return false;
+}
+
 inline bool Type::isCheckedPointerMMSafeType() const {
-  return isCheckedPointerMMType() || isCheckedPointerMMArrayType();
+  return isCheckedPointerMMType() || isCheckedPointerMMArrayType() ||
+         isCheckedPointerMMLargeType();
 }
 
 inline bool Type::isAnyPointerType() const {

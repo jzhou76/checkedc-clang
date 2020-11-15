@@ -1746,8 +1746,8 @@ void CodeGenFunction::EmitStoreOfScalar(llvm::Value *Value, Address Addr,
     cast<llvm::PointerType>(Addr.getPointer()->getType())->getElementType();
   if (pointeeTy->isMMSafePointerTy() && isa<llvm::ConstantPointerNull>(Value)) {
     // Checked C
-    // Assign a NULL to an _MM_ptr or _MM_array_ptr.
-    // Create a GEP to get the inner raw pointer and make it an Address.
+    // Assign a NULL to an MMSafe pointer.
+    // Create a GEP to get the inner raw pointer and create an Address for it.
     Addr = Builder.CreateStructGEP(Addr, 0, CharUnits::fromQuantity(0),
                                    Addr.getName() + "_innerPtr");
   }
@@ -2633,7 +2633,8 @@ LValue CodeGenFunction::EmitUnaryOpLValue(const UnaryOperator *E) {
     EmitDynamicBoundsCheck(Addr, E->getBoundsExpr(), E->getBoundsCheckKind(),
                            nullptr);
 
-    // Checked C: Check for Struct ID matching.
+    // Checked C
+    // Check for key-lock matching.
     EmitDynamicKeyCheck(E->getSubExpr());
 
     // We should not generate __weak write barrier on indirect reference
@@ -3547,7 +3548,7 @@ LValue CodeGenFunction::EmitArraySubscriptExpr(const ArraySubscriptExpr *E,
                          nullptr);
 
   // Checked C
-  // Dynamic key-lock check on _MM_array_ptr.
+  // Dynamic key-lock check on _MM_array_ptr and _MM_large_ptr.
   if (dynamicKeyCheck) {
     EmitDynamicKeyCheck(E->getLHS());
   }

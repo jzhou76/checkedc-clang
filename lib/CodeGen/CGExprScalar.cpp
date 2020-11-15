@@ -2286,7 +2286,7 @@ Value *ScalarExprEmitter::VisitCastExpr(CastExpr *CE) {
       (void) Visit(E);
     llvm::Type *llvmDestTy = ConvertType(DestTy);
     if (DestTy->isCheckedPointerMMSafeType()) {
-      // Checked C: assign an NULL to a _MM_ptr or _MM_array_ptr.
+      // Checked C: assign an NULL to an MMSafe pointer.
       return CGF.CGM.getNullPointer(llvmDestTy->getMMSafePtrInnerPtrTy(), DestTy);
     } else {
       return CGF.CGM.getNullPointer(cast<llvm::PointerType>(llvmDestTy), DestTy);
@@ -2639,8 +2639,9 @@ ScalarExprEmitter::EmitScalarPrePostIncDec(const UnaryOperator *E, LValue LV,
         value = Builder.CreateGEP(value, amt, "incdec.ptr");
       else {
         // Checked C
-        // ++/-- on MMArrayPtr.
-        if (value->getType()->isMMArrayPointerTy()) {
+        // ++/-- on MMArrayPtr and MMLargePtr.
+        if (value->getType()->isMMArrayPointerTy() ||
+            value->getType()->isMMLargePointerTy()) {
           Value *innerPtr =
             Builder.CreateExtractValue(value, 0, value->getName() + "_innerPtr");
           Value *updatedInnerPtr =
@@ -2648,7 +2649,19 @@ ScalarExprEmitter::EmitScalarPrePostIncDec(const UnaryOperator *E, LValue LV,
                                        /*SignedIndices=*/false,
                                        E->getExprLoc(), "incdec.ptr");
           value = Builder.CreateInsertValue(value, updatedInnerPtr, 0);
-
+          if (value->getType()->isMMArrayPointerTy()) {
+            // Update the key-offset field of an MMArrayPtr.
+            Value *KeyOffset = Builder.CreateExtractValue(value, 1, "KeyOffset");
+            const llvm::DataLayout &DL = CGF.CGM.getDataLayout();
+            llvm::Type *ArrayElemType =
+              cast<llvm::PointerType>(innerPtr->getType())->getElementType();
+            ConstantInt *ArrayElemSize =
+              Builder.getInt64(DL.getTypeAllocSize(ArrayElemType));
+            Value *newKeyOffset
+              = isSubtraction ? Builder.CreateSub(KeyOffset, ArrayElemSize)
+                              : Builder.CreateAdd(KeyOffset, ArrayElemSize);
+            value = Builder.CreateInsertValue(value, newKeyOffset, 1);
+          }
         } else {
           value = CGF.EmitCheckedInBoundsGEP(value, amt, /*SignedIndices=*/false,
                                              isSubtraction, E->getExprLoc(),
@@ -3454,20 +3467,28 @@ static Value *emitPointerArithmetic(CodeGenFunction &CGF,
 
 //
 // Checked C
-// Emit pointer addition for _MM_array_ptr.
+// Emit pointer addition for _MM_array_ptr and _MM_large_ptr.
 //
-// This function extracts the inner raw pointer of the MMArrayPtr and
-// does a normal pointer addition, and creates a new MMArrayPtr with the
-// result from the addition and the key and the lock's address from the
-// source MMArrayPtr.
+// This function extracts the inner raw pointer of the MMSafe array pointer and
+// does a normal pointer addition, and creates a new MMSafe array pointer with
+// the result from the addition. For _MM_array_ptr, the key-offset field
+// also needs update.
 //
-static Value *emitMMArrayPointerAdd(CodeGenFunction &CGF, const BinOpInfo &op) {
+static Value *emitMMSafePointerAdd(CodeGenFunction &CGF, const BinOpInfo &op,
+                                   bool isMMLargePtr=false) {
   CGBuilderTy &Builder = CGF.Builder;
   Value *LHS = op.LHS, *RHS = op.RHS;
-  Value *Ptr = LHS->getType()->isMMArrayPointerTy() ? LHS : RHS;
-  Value *Num = LHS->getType()->isMMArrayPointerTy() ? RHS : LHS;
-  Value *rawPtr = Builder.CreateExtractValue(Ptr, 0,
-                                             Ptr->getName() + "_innerPtr");
+  Value *Ptr, *Num;
+  if (LHS->getType()->isMMArrayPointerTy() ||
+      LHS->getType()->isMMLargePointerTy()) {
+    Ptr = LHS;
+    Num = RHS;
+  } else {
+    Ptr = RHS;
+    Num = LHS;
+  }
+  Value *rawPtr =
+    Builder.CreateExtractValue(Ptr, 0, Ptr->getName() + "_innerPtr");
 
   // Create a new BinOpInfo and does a normal pointer arithmetic.
   BinOpInfo rawPtrArithmeticOp = op;
@@ -3475,33 +3496,51 @@ static Value *emitMMArrayPointerAdd(CodeGenFunction &CGF, const BinOpInfo &op) {
   rawPtrArithmeticOp.RHS = Num;
   Value *Add = emitPointerArithmetic(CGF, rawPtrArithmeticOp, false);
 
-  // Extract the key and the address of the lock from the Src MMArrayPtr.
-  Value *key = Builder.CreateExtractValue(Ptr, 1);
-  Value *lockPtr = Builder.CreateExtractValue(Ptr, 2);
-  // Create and return a new MMSafePtr.
+  // Create and return a new MMSafe pointer.
   llvm::UndefValue *Dest = llvm::UndefValue::get(Ptr->getType());
   Value *insertNewPtr = Builder.CreateInsertValue(Dest, Add, 0);
-  Value *insertKey = Builder.CreateInsertValue(insertNewPtr, key, 1);
-  return Builder.CreateInsertValue(insertKey, lockPtr, 2);
+  if (isMMLargePtr) {
+    // Extract the key and the address of the lock from the Src MMLargePtr.
+    Value *Key = Builder.CreateExtractValue(Ptr, 1);
+    Value *LockPtr = Builder.CreateExtractValue(Ptr, 2);
+    Value *insertKey = Builder.CreateInsertValue(insertNewPtr, Key, 1);
+    return Builder.CreateInsertValue(insertKey, LockPtr, 2);
+  } else {
+    // MMArrayPtr.
+    Value *KeyOffset = Builder.CreateExtractValue(Ptr, 1);
+    // Compute the offset = Num * sizeof(array_element_type).
+    // Would it be faster (and safe) to cast the operands of the multification
+    // to int32, and cast the result to int64, and do the final addition?
+    const llvm::DataLayout &DL = CGF.CGM.getDataLayout();
+    llvm::Type *ArrayElemType =
+      cast<llvm::PointerType>(rawPtr->getType())->getElementType();
+    ConstantInt *ArrayElemSize =
+      Builder.getInt64(DL.getTypeAllocSize(ArrayElemType));
+    Value *Offset =
+      Builder.CreateMul(Builder.CreateIntCast(Num, Builder.getInt64Ty(), false),
+                        ArrayElemSize);
+    Value *newKeyOffset = Builder.CreateAdd(KeyOffset, Offset);
+    return Builder.CreateInsertValue(insertNewPtr, newKeyOffset, 1);
+  }
 }
 
 //
 // Checked C
-// Emit pointer subtraction for _MM_array_ptr.
+// Emit pointer subtraction for _MM_array_ptr and _MM_large_ptr.
 //
-// For MMArrayPtr subtracting a number, this function extracts the inner
-// raw pointer and does a normal pointer subtraction, and creates a new
-// MMSafePtr with the result from the subtraction and the key and the lock's
-// address from the source MMSafePtr.
-// For pointer subtraction between two MMArrayPtr, this function extracts
-// the raw pointers of both sides, does a normal pointer subtraction and
-// return the result.
+// This function extracts the inner raw pointer from the MMSafe array pointer
+// and does a normal pointer subtraction, and creates a new
+// MMSafe array pointer with the result from the subtraction.
+//
+// For pointer subtraction between two MMSafe array pointers, this function
+// extracts the raw pointers of both sides, does a normal pointer subtraction
+// and return the result.
 //
 // @param SEE - used to call ScalarExprEmitter::EmitSub() in case of this is
 //              subtraction between two MMArrayPtr.
 //
-static Value *emitMMArrayPointerSub(ScalarExprEmitter &SEE,
-                                    CodeGenFunction &CGF, const BinOpInfo &op) {
+static Value *emitMMSafePointerSub(ScalarExprEmitter &SEE, CodeGenFunction &CGF,
+                                   const BinOpInfo &op, bool isMMLargePtr=false) {
   CGBuilderTy &Builder = CGF.Builder;
   Value *LHS = op.LHS, *RHS = op.RHS;
 
@@ -3509,9 +3548,12 @@ static Value *emitMMArrayPointerSub(ScalarExprEmitter &SEE,
   Value *rawLHS = Builder.CreateExtractValue(LHS, 0,
                                              LHS->getName() + "_innerPtr");
   Value *rawRHS = RHS;
-  if(RHS->getType()->isMMArrayPointerTy()) {
-    rawRHS = Builder.CreateExtractValue(RHS, 0,
-                                       RHS->getName() + "_innerPtr");
+  if(RHS->getType()->isMMArrayPointerTy() ||
+     RHS->getType()->isMMLargePointerTy()) {
+    rawRHS =
+      Builder.CreateExtractValue(RHS, 0, RHS->getName() + "_innerPtr");
+
+#if 0
     // Check if the LHS and RHS are pointing to the same array;
     // we disallow subtraction between MMArrayPtr to different arrays.
     //
@@ -3520,8 +3562,9 @@ static Value *emitMMArrayPointerSub(ScalarExprEmitter &SEE,
     Value *keyRHS = Builder.CreateExtractValue(RHS, 1);
     CGF.EmitDynamicCheckBlocks(Builder.CreateICmpEQ(keyLHS, keyRHS,
                                "MMArrayPtrSubKeyCheck"));
+#endif
 
-    // Key checking passes. Emit a normal subtraction between two pointers.
+    // Emit a normal subtraction between two pointers.
     rawPtrArithmeticOp.LHS = rawLHS;
     rawPtrArithmeticOp.RHS = rawRHS;
     return SEE.EmitSub(rawPtrArithmeticOp);
@@ -3531,14 +3574,30 @@ static Value *emitMMArrayPointerSub(ScalarExprEmitter &SEE,
   rawPtrArithmeticOp.RHS = rawRHS;
   Value *Sub = emitPointerArithmetic(CGF, rawPtrArithmeticOp, true);
 
-  // Extract the key and the address of the lock from the Src MMArrayPtr.
-  Value *key = Builder.CreateExtractValue(LHS, 1);
-  Value *lockPtr = Builder.CreateExtractValue(LHS, 2);
-  // Create a new MMSafePtr.
   llvm::UndefValue *Dest = llvm::UndefValue::get(LHS->getType());
   Value *insertNewPtr = Builder.CreateInsertValue(Dest, Sub, 0);
-  Value *insertKey = Builder.CreateInsertValue(insertNewPtr, key, 1);
-  return Builder.CreateInsertValue(insertKey, lockPtr, 2);
+  if (isMMLargePtr) {
+    // Extract the key and the address of the lock from the Src MMArrayPtr.
+    Value *Key = Builder.CreateExtractValue(LHS, 1);
+    Value *LockPtr = Builder.CreateExtractValue(LHS, 2);
+    // Create a new MMSafePtr.
+    Value *insertKey = Builder.CreateInsertValue(insertNewPtr, Key, 1);
+    return Builder.CreateInsertValue(insertKey, LockPtr, 2);
+  } else {
+    // MMArray pointer.
+    Value *KeyOffset = Builder.CreateExtractValue(LHS, 1);
+    // Compute the offset = Num * sizeof(array_element_type).
+    const llvm::DataLayout &DL = CGF.CGM.getDataLayout();
+    llvm::Type *ArrayElemType =
+      cast<llvm::PointerType>(rawLHS->getType())->getElementType();
+    ConstantInt *ArrayElemSize =
+      Builder.getInt64(DL.getTypeAllocSize(ArrayElemType));
+    Value *Offset =
+      Builder.CreateMul(Builder.CreateIntCast(RHS, Builder.getInt64Ty(), false),
+                        ArrayElemSize);
+    Value *newKeyOffset = Builder.CreateSub(KeyOffset, Offset);
+    return Builder.CreateInsertValue(insertNewPtr, newKeyOffset, 1);
+  }
 }
 
 // Construct an fmuladd intrinsic to represent a fused mul-add of MulOp and
@@ -3614,11 +3673,15 @@ Value *ScalarExprEmitter::EmitAdd(const BinOpInfo &op) {
     return emitPointerArithmetic(CGF, op, CodeGenFunction::NotSubtraction);
 
   // Checked C
-  // Emit an MMArrayPtr add.
+  // Emit an MMArrayPtr or MMLargePtr add.
   if (op.LHS->getType()->isMMArrayPointerTy() ||
       op.RHS->getType()->isMMArrayPointerTy()) {
-    return emitMMArrayPointerAdd(CGF, op);
+    return emitMMSafePointerAdd(CGF, op);
+  } else if (op.LHS->getType()->isMMLargePointerTy() ||
+             op.RHS->getType()->isMMLargePointerTy()) {
+    return emitMMSafePointerAdd(CGF, op, true);
   }
+
 
   if (op.Ty->isSignedIntegerOrEnumerationType()) {
     switch (CGF.getLangOpts().getSignedOverflowBehavior()) {
@@ -3654,9 +3717,11 @@ Value *ScalarExprEmitter::EmitAdd(const BinOpInfo &op) {
 
 Value *ScalarExprEmitter::EmitSub(const BinOpInfo &op) {
   // Checked C
-  // Emit an MMArrayPtr sub.
+  // Emit an MMArrayPtr or MMLargePtr sub.
   if (op.LHS->getType()->isMMArrayPointerTy()) {
-    return emitMMArrayPointerSub(*this, CGF, op);
+    return emitMMSafePointerSub(*this, CGF, op);
+  } else if (op.LHS->getType()->isMMLargePointerTy()) {
+    return emitMMSafePointerSub(*this, CGF, op, true);
   }
 
   // The LHS is always a pointer if either side is.

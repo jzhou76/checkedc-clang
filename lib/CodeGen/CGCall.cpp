@@ -3877,7 +3877,8 @@ RValue CodeGenFunction::EmitCall(const CGFunctionInfo &CallInfo,
       llvm::Value *SRetValuePtr = SRetPtr.getPointer();
       IRCallArgs[SRetArgNo] = SRetValuePtr;
       // Checked C
-      // Handle the case when a _MM_array_ptr<T> is returned by a function.
+      // Handle the case when a _MM_large_ptr<T> is returned by a function.
+      // (currently the only function is mm_large_alloc<T>).
       // In this case, there could be a type mismatch between the concrete
       // type from the caller side and the generic type from the callee side.
       // Here we insert a bitcast instruction to cast the pointer to the
@@ -3892,8 +3893,8 @@ RValue CodeGenFunction::EmitCall(const CGFunctionInfo &CallInfo,
       llvm::PointerType *IRFuncSRetTy =
         dyn_cast<llvm::PointerType>(IRFuncTy->getParamType(SRetArgNo));
       if (SRetPointerTy && IRFuncSRetTy &&
-          SRetPointerTy->getElementType()->isMMArrayPointerTy() &&
-          IRFuncSRetTy->getElementType()->isMMArrayPointerTy()) {
+          SRetPointerTy->getElementType()->isMMLargePointerTy() &&
+          IRFuncSRetTy->getElementType()->isMMLargePointerTy()) {
         IRCallArgs[SRetArgNo] =
           Builder.CreatePointerCast(SRetValuePtr, IRFuncSRetTy,
                                     SRetValuePtr->getName() + "_generic");
@@ -4134,8 +4135,9 @@ RValue CodeGenFunction::EmitCall(const CGFunctionInfo &CallInfo,
           if (STy->isMMSafePointerRep() &&
               LI->getType() != IRFuncTy->getParamType(FirstIRArg + i)) {
             // Checked C
-            // LLVM flatterns the struct representation of an MMSafe pointer.
-            // When calling a function with generic MMSafe pointer parameters,
+            // LLVM may flatten the struct representation of an _MM_ptr or
+            // _MM_array_ptr.  When calling a function with arguments of
+            // such pointer to the generic type,
             // there could be a type mismatch between the pointer of
             // the generic type (implemented as "i8*") and the concrete pointer
             // type. Here we bitcast the concrete type to be the generic type.
@@ -4535,9 +4537,9 @@ RValue CodeGenFunction::EmitCall(const CGFunctionInfo &CallInfo,
           llvm::Value *V = CI;
 
           // Checked C
-          // When a generic function returns a _MM_ptr<T>, there could be
-          // a type mismatch between the generic return type {i8*, i64}
-          // and the concrete return type {some_struct*, i64 }.
+          // When a generic function returns a _MM_ptr<T> or _MM_array_ptr<T>,
+          // there could be a type mismatch between the generic return type
+          // {i8*, i64} and the concrete return type {some_type*, i64 }.
           // Here we "cast" the generic return to the concrete one.
           // Since LLVM does not support direct cast between structs,
           // we create and construct a new struct of the concrete type.
@@ -4546,8 +4548,11 @@ RValue CodeGenFunction::EmitCall(const CGFunctionInfo &CallInfo,
           // pointer type; however, this pointer type is implemented as a
           // struct. So it might make more sense to move this piece of code
           // to "case TEK_Aggregate" above.
-          if (V->getType()->isMMPointerTy() && RetIRTy->isMMPointerTy() &&
-              V->getType() != RetIRTy) {
+          if (((V->getType()->isMMPointerTy() && RetIRTy->isMMPointerTy()) ||
+              (V->getType()->isMMArrayPointerTy() && RetIRTy->isMMArrayPointerTy()))
+              && V->getType() != RetIRTy) {
+            // The type checking of isMMPointerTy() and isMMArrayPointerTy()
+            // might be redundant. We should've handled it during parsing.
             V = Builder.CreateMMSafePtrCast(V, RetIRTy,
                                             V->getName() + "_concreteRet");
           }
