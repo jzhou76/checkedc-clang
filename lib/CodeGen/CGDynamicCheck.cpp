@@ -388,38 +388,55 @@ void CodeGenFunction::EmitDynamicKeyCheck(const Expr *E) {
   // Return if the dereference is neither _MM_ptr nor _MM_array_ptr type.
   if (!E->getType()->isCheckedPointerMMSafeType()) return;
 
-  // Strip off parenthesis and casts of the Expr.
-  while (isa<ParenExpr>(E) || isa<CastExpr>(E)) {
-    E = isa<ParenExpr>(E) ? cast<ParenExpr>(E)->getSubExpr() :
-                            cast<CastExpr>(E)->getSubExpr();
-  }
-
-  // Handle increment/decrement operations, e.g., *p++/-- and *++/--p.
-  if (isa<UnaryOperator>(E) &&
-      cast<UnaryOperator>(E)->isIncrementDecrementOp()) {
-    E = cast<UnaryOperator>(E)->getSubExpr();
-  }
-
-  // FIXME: Handle arithmetic expressions such as *(p +/ num).
-
   // Get the LValue of the MMSafePtr.
   LValue MMSafePtrLV;
-  if (isa<DeclRefExpr>(E)) {
-    MMSafePtrLV = EmitDeclRefLValue(cast<DeclRefExpr>(E));
-  } else if (isa<MemberExpr>(E)) {
-    // The second argument tells EmitMemberExpr() to not invoke
-    // EmitDynamicKeyCheck() recursively.
-    MMSafePtrLV = EmitMemberExpr(cast<MemberExpr>(E), false);
-  } else if (isa<ArraySubscriptExpr>(E)) {
-    MMSafePtrLV = EmitArraySubscriptExpr(cast<ArraySubscriptExpr>(E), false,
-                                         /*dynamicKeyCheck=*/false);
-  } else {
-    assert(0 && "Cannot recognize Expr type in EmitDynamicKeyCheck()");
+  // Parse the Expression to extract the MMSafe pointer.
+  while (true) {
+
+    // Strip off parenthesis and casts of the Expr.
+    while (isa<ParenExpr>(E) || isa<CastExpr>(E)) {
+      E = isa<ParenExpr>(E) ? cast<ParenExpr>(E)->getSubExpr() :
+        cast<CastExpr>(E)->getSubExpr();
+    }
+
+    switch(E->getStmtClass()) {
+      case Expr::DeclRefExprClass:
+        MMSafePtrLV = EmitDeclRefLValue(cast<DeclRefExpr>(E));
+        break;
+      case Expr::MemberExprClass:
+        // The second argument tells EmitMemberExpr() to not invoke
+        // EmitDynamicKeyCheck() recursively.
+        MMSafePtrLV = EmitMemberExpr(cast<MemberExpr>(E), false);
+        break;
+      case Expr::ArraySubscriptExprClass:
+        MMSafePtrLV = EmitArraySubscriptExpr(cast<ArraySubscriptExpr>(E), false,
+                                             /*dynamicKeyCheck=*/false);
+        break;
+      case Expr::UnaryOperatorClass:
+        // Handle increment/decrement operations, e.g., *p++/-- and *++/--p.
+        assert(cast<UnaryOperator>(E)->isIncrementDecrementOp() &&
+               "Unsupported Unary Operator");
+        E = cast<UnaryOperator>(E)->getSubExpr();
+        break;
+      case Expr::BinaryOperatorClass: {
+        // Hanlde expression like *(p +/- num).
+        const BinaryOperator *BO = cast<BinaryOperator>(E);
+        assert(BO->isAdditiveOp() && "Unsupported binary operator.");
+        Expr *LHS = BO->getLHS(), *RHS = BO->getRHS();
+        E = LHS->getType()->isCheckedPointerMMSafeType() ? LHS : RHS;
+        break;
+      }
+      default:
+        assert(0 && "Unknown Expr");
+        break;
+    }
+
+    if (!MMSafePtrLV.getType().isNull()) break;
   }
 
   NumDynamicKeyCheck++;
 
-  Value *MMSafePtr = MMSafePtrLV.getAddress().getPointer();
+  Value *MMSafePtr = MMSafePtrLV.getPointer();
 
   llvm::IRBuilder<> InstBuilder(Builder.GetInsertBlock());
   LLVMContext &Context = MMSafePtr->getContext();
