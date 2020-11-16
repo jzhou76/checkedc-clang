@@ -662,10 +662,10 @@ void EmitAssemblyHelper::CreatePasses(legacy::PassManager &MPM,
   }
 
   // Checked C
-  // Run the MMSafePtr type mismatch resolving pass.  Run this pass before
+  // Run the MMSafePtr type mismatch resolving pass. Need Run this pass before
   // the VerifierPass, otherwise the VerifierPass would fail.
-  if (CodeGenOpts.HarmonizeType) {
-    FPM.add(createHarmonizeTypePass());
+  if (CodeGenOpts.CheckedCHarmonizeType) {
+    FPM.add(createCheckedCHarmonizeTypePass());
   }
 
   // Set up the per-function pass manager.
