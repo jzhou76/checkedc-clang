@@ -482,6 +482,7 @@ void CodeGenFunction::EmitDynamicKeyCheck(const Expr *E) {
     MMSafeArg->setName("mm_ptr_ptr");
 
     if (CheckFn->empty()) {
+      CheckFn->setLinkage(GlobalVariable::InternalLinkage);
       CurFn = CheckFn;
       Builder.SetInsertPoint(BasicBlock::Create(Context, "entry", CheckFn));
 
@@ -538,6 +539,7 @@ void CodeGenFunction::EmitDynamicKeyCheck(const Expr *E) {
     MMSafeArg->setName("mm_array_ptr_ptr");
 
     if(CheckFn->empty()) {
+      CheckFn->setLinkage(GlobalVariable::InternalLinkage);
       CurFn = CheckFn;
       Builder.SetInsertPoint(BasicBlock::Create(Context, "entry", CheckFn));
 
