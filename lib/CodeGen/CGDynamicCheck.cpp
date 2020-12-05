@@ -464,7 +464,6 @@ void CodeGenFunction::EmitDynamicKeyCheck(const Expr *E) {
   llvm::PointerType *Int64PtrTy = llvm::Type::getInt64PtrTy(Context);
   StringRef ptrName = MMSafePtr_Ptr->getName();
   llvm::Module *M = CurFn->getParent();
-  std::string ModuleName = M->getName().str();
 
   Function *CheckFn = nullptr;
   llvm::FunctionType *CheckFnTy = nullptr;
@@ -477,7 +476,7 @@ void CodeGenFunction::EmitDynamicKeyCheck(const Expr *E) {
     llvm::PointerType *MMPtrPtrType = llvm::PointerType::getUnqual(MMPtrType);
     CheckFnTy = llvm::FunctionType::get(VoidTy, {MMPtrPtrType}, false);
     CheckFn = cast<Function>(M->getOrInsertFunction(
-                          StringRef(ModuleName + "_MMPtrKeyCheck"), CheckFnTy));
+                             StringRef("MMPtrKeyCheck"), CheckFnTy));
     MMSafeArg = &*CheckFn->arg_begin();
     MMSafeArg->setName("mm_ptr_ptr");
 
@@ -534,7 +533,7 @@ void CodeGenFunction::EmitDynamicKeyCheck(const Expr *E) {
       llvm::PointerType::getUnqual(MMArrayPtrType);
     CheckFnTy = llvm::FunctionType::get(VoidTy, {MMArrayPtrPtrType}, false);
     CheckFn = cast<Function>(M->getOrInsertFunction(
-                        StringRef(ModuleName + "_MMArrayKeyCheck"), CheckFnTy));
+                             StringRef("MMArrayKeyCheck"), CheckFnTy));
     MMSafeArg = &*CheckFn->arg_begin();
     MMSafeArg->setName("mm_array_ptr_ptr");
 
