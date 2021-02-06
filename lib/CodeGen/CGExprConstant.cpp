@@ -1467,6 +1467,12 @@ llvm::Constant *ConstantEmitter::tryEmitPrivateForVarInit(const VarDecl &D) {
 
   QualType destType = D.getType();
 
+  // Checked C
+  // Emit a NULL MMSafe pointer.
+  if (destType->isCheckedPointerMMSafeType()) {
+    return CGM.EmitNullMMSafePtr(destType);
+  }
+
   // Try to emit the initializer.  Note that this can allow some things that
   // are not allowed by tryEmitPrivateForMemory alone.
   if (auto value = D.evaluateValue()) {
@@ -2153,10 +2159,14 @@ llvm::Constant *ConstantEmitter::emitNullForMemory(CodeGenModule &CGM,
 }
 
 llvm::Constant *CodeGenModule::EmitNullConstant(QualType T) {
-  if (T->getAs<PointerType>())
+  if (T->getAs<PointerType>()) {
+    // Checked C
+    // For implicit initialization of a global MMSafe pointer.
+    if (T->isCheckedPointerMMSafeType())
+      return EmitNullMMSafePtr(T);
     return getNullPointer(
         cast<llvm::PointerType>(getTypes().ConvertTypeForMem(T)), T);
-
+  }
   if (getTypes().isZeroInitializable(T))
     return llvm::Constant::getNullValue(getTypes().ConvertTypeForMem(T));
 
@@ -2180,6 +2190,40 @@ llvm::Constant *CodeGenModule::EmitNullConstant(QualType T) {
          "Should only see pointers to data members here!");
 
   return getCXXABI().EmitNullMemberPointer(T->castAs<MemberPointerType>());
+}
+
+//
+// Checked C
+//
+// This function emits a NULL MMSafe pointer. The raw pointer fields are
+// initialized to NULL and the key-offset field is initialized to 0.
+// This function is used for global MMSafe pointer initialization.
+//
+llvm::Constant *CodeGenModule::EmitNullMMSafePtr(QualType type) {
+  llvm::Type *PointeeTy =
+    getTypes().ConvertTypeForMem(type->getPointeeType());
+  llvm::LLVMContext &llvmContext = getLLVMContext();
+  unsigned AS = getContext().getTargetAddressSpace(type);
+  // Null pointer for the pointee.
+  llvm::ConstantPointerNull *NullPointeePtr =
+    llvm::ConstantPointerNull::get(llvm::PointerType::get(PointeeTy, AS));
+  // 64-bit 0.
+  llvm::Constant *ZeroConst =
+    llvm::ConstantInt::get(llvm::IntegerType::getInt64Ty(llvmContext), 0);
+
+  if (type->isCheckedPointerMMType()) {
+    llvm::StructType *MMPtrTy =
+      llvm::PointerType::getMMPtr(PointeeTy, llvmContext, AS);
+    return llvm::ConstantStruct::get(MMPtrTy, {NullPointeePtr, ZeroConst});
+  } else {
+    // Null for the lock pointer.
+    llvm::ConstantPointerNull *NullLockPtr =
+      llvm::ConstantPointerNull::get(llvm::Type::getInt64PtrTy(llvmContext, AS));
+    llvm::StructType *MMArrayPtrTy =
+      llvm::PointerType::getMMArrayPtr(PointeeTy, llvmContext, AS);
+    return llvm::ConstantStruct::get(MMArrayPtrTy,
+                                     {NullPointeePtr, ZeroConst, NullLockPtr});
+  }
 }
 
 llvm::Constant *
