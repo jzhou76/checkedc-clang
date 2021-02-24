@@ -608,7 +608,7 @@ public:
     // and returns an MMSafe pointer.
 
     if (isa<GetElementPtrInst>(result)) {
-      // This Expr gets the address of an object in astruct or an array.
+      // This Expr gets the address of an object in a struct or an array.
       Expr *e = E->getSubExpr();
       bool hasMMSafePtrExpr = false;
 
@@ -616,7 +616,7 @@ public:
       // address from an object pointed by an MMSafe Pointer.
       bool reachedTop = false;  // The parsing has reached to the top left.
       while (!reachedTop) {
-        // Strip off casts and parenthese.
+        // Strip off casts and parentheses.
         while (isa<CastExpr>(e) || isa<ParenExpr>(e)) {
           e = isa<CastExpr>(e) ? cast<CastExpr>(e)->getSubExpr() :
                                  cast<ParenExpr>(e)->getSubExpr();
@@ -642,6 +642,10 @@ public:
 
         if (e->getType()->isCheckedPointerMMSafeType()) {
           hasMMSafePtrExpr = true;
+          break;
+        } else if (e->getType()->isPointerType()) {
+          // In the access chain, a raw C pointer dereference happens
+          // before a (potential) checked pointer dereference.
           break;
         }
       }
