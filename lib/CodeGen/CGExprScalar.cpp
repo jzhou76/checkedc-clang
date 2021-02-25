@@ -615,6 +615,7 @@ public:
       // Do a right-to left traversal of the Expr to see if the '&' gets the
       // address from an object pointed by an MMSafe Pointer.
       bool reachedTop = false;  // The parsing has reached to the top left.
+      bool isArray = false;     // If the Expr is an array during parsing.
       while (!reachedTop) {
         // Strip off casts and parentheses.
         while (isa<CastExpr>(e) || isa<ParenExpr>(e)) {
@@ -628,6 +629,7 @@ public:
             break;
           case Expr::ArraySubscriptExprClass:
             e = cast<ArraySubscriptExpr>(e)->getBase();
+            isArray = true;
             break;
           case Expr::UnaryOperatorClass:
             e = cast<UnaryOperator>(e)->getSubExpr();
@@ -643,11 +645,19 @@ public:
         if (e->getType()->isCheckedPointerMMSafeType()) {
           hasMMSafePtrExpr = true;
           break;
-        } else if (e->getType()->isPointerType()) {
-          // In the access chain, a raw C pointer dereference happens
-          // before a (potential) checked pointer dereference.
+        } else if (e->getType()->isPointerType() && !isArray) {
+          // In the access chain, if a raw C pointer dereference is seen
+          // before a checked pointer dereference, the parsing can stop.
+          // For example, in "&p->p1->i" p is an mmptr but p1 is a C pointer.
+          // Here we also need confirm the pointer is not an array because
+          // sometimes it's hard to differentiate an array pointer from just
+          // a pointer: ArraySubscriptExpr::getBase() returns an Expr of
+          // PointerType.  For example, for "&p->arr[3]" where arr is of
+          // type Node, after running the getBase() method on the array Expr,
+          // it returns an Expr of PointerType "Node *".
           break;
         }
+        isArray = false;
       }
 
       // Return the result if no MMSafe pointer is found in the access chain.
