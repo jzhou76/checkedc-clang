@@ -683,34 +683,40 @@ public:
             "This GEP of StructType has more than 2 indices.");
 
         // Get the index of the struct or array.
-        Value *Index = GEP->getNumIndices() == 1 ? GEP->getOperand(1)
-                                                 : GEP->getOperand(2);
-        if(isa<StructType>(GEPPtrElemType)) {
-          // Compute the offset in the struct.
-
-          // TO-DO: If the first index is not 0, add sizeof(struct) * firstIdx
-          // to Offset.
-          ConstantInt *firstIdx = cast<ConstantInt>(GEP->getOperand(1));
-          if (!firstIdx->isZero()) {
-            assert(0 && "The first index is not zero.");
-          }
-
-          const llvm::StructLayout *SL =
-            DL.getStructLayout(cast<StructType>(GEPPtrElemType));
-          uint64_t IdxOfStruct =
-            cast<ConstantInt>(Index)->getZExtValue();
-          ConstantInt *offsetOfStruct =
-            Builder.getInt64(SL->getElementOffset(IdxOfStruct));
-          Offset = Builder.CreateAdd(Offset, offsetOfStruct);
-        } else if (isa<llvm::ArrayType>(GEPPtrElemType)) {
-          // Compute the offset in the array.
-          llvm::ArrayType *ArrType = cast<llvm::ArrayType>(GEPPtrElemType);
-          ConstantInt *ArrayElemSize =
-            Builder.getInt64(DL.getTypeAllocSize(ArrType->getElementType()));
-          Value *ArrayOffset = Builder.CreateMul(Index, ArrayElemSize);
-          Offset = Builder.CreateAdd(Offset, ArrayOffset);
+        Value *Index = NULL;
+        if (isArray && GEP->getNumIndices() == 1) {
+          // "&p[i]"
+          Index = GEP->getOperand(1);
         } else {
-          assert(0 && "Unknown GEP Element Type");
+          Index = GEP->getOperand(2);
+          // Working on an field of a struct.
+          if(isa<StructType>(GEPPtrElemType)) {
+            // Compute the offset in the struct.
+
+            // TO-DO: If the first index is not 0, add sizeof(struct) * firstIdx
+            // to Offset.
+            ConstantInt *firstIdx = cast<ConstantInt>(GEP->getOperand(1));
+            if (!firstIdx->isZero()) {
+              assert(0 && "The first index is not zero.");
+            }
+
+            const llvm::StructLayout *SL =
+              DL.getStructLayout(cast<StructType>(GEPPtrElemType));
+            uint64_t IdxOfStruct =
+              cast<ConstantInt>(Index)->getZExtValue();
+            ConstantInt *offsetOfStruct =
+              Builder.getInt64(SL->getElementOffset(IdxOfStruct));
+            Offset = Builder.CreateAdd(Offset, offsetOfStruct);
+          } else if (isa<llvm::ArrayType>(GEPPtrElemType)) {
+            // Compute the offset in the array.
+            llvm::ArrayType *ArrType = cast<llvm::ArrayType>(GEPPtrElemType);
+            ConstantInt *ArrayElemSize =
+              Builder.getInt64(DL.getTypeAllocSize(ArrType->getElementType()));
+            Value *ArrayOffset = Builder.CreateMul(Index, ArrayElemSize);
+            Offset = Builder.CreateAdd(Offset, ArrayOffset);
+          } else {
+            assert(0 && "Unknown GEP Element Type");
+          }
         }
 
         if (isa<llvm::LoadInst>(GEPPtr)) {
@@ -721,17 +727,43 @@ public:
           // the rightmost pointer. Anyway, let's add one assert for safety.
           Value *MMSafePtr_Ptr =
             cast<llvm::LoadInst>(GEPPtr)->getPointerOperand();
-          assert(cast<llvm::PointerType>(
-                MMSafePtr_Ptr->getType())->getElementType()->isMMSafePointerTy()
-              && "Not loading an MMSafe pointer.");
+          llvm::Type *MMSafePtrTy =
+            cast<llvm::PointerType>(MMSafePtr_Ptr->getType())->getElementType();
+          assert(MMSafePtrTy->isMMSafePointerTy()
+                 && "Not loading an MMSafe pointer.");
           StringRef ptrName = MMSafePtr_Ptr->getName();
-          Value *KeyOffsetSrcPtr =
-            Builder.CreateStructGEP(MMSafePtr_Ptr, 1, ptrName + "_KeyOffsetPtr");
+
+          Value *KeyOffsetSrcPtr = Builder.CreateStructGEP(MMSafePtr_Ptr, 1);
           Value *KeyOffsetSrc =
-            Builder.CGBuilderBaseTy::CreateLoad(KeyOffsetSrcPtr,
-                                                ptrName + "_KeyOffset");
+            Builder.CGBuilderBaseTy::CreateLoad(KeyOffsetSrcPtr, ptrName);
+
+          // Getting the address of an item of an array.
+          if (MMSafePtrTy->isMMArrayPointerTy()) {
+            KeyOffsetSrc = Builder.CreateShl(KeyOffsetSrc, 32);
+            Value *LockAddrPtr = Builder.CreateStructGEP(MMSafePtr_Ptr, 2);
+            Value *LockAddr = Builder.CGBuilderBaseTy::CreateLoad(LockAddrPtr);
+            Value *RawPtrPtr = Builder.CreateStructGEP(MMSafePtr_Ptr, 0);
+            Value *RawPtr = Builder.CGBuilderBaseTy::CreateLoad(RawPtrPtr);
+            RawPtr = Builder.CreatePointerCast(RawPtr, LockAddr->getType());
+            llvm::IntegerType *Int64Ty = Builder.getInt64Ty();
+            // Compute the offset: it is the "distance" between the
+            // lock_location and the current raw pointer + the new offset
+            // generated by the array_index * elem_size + offset_of_the_elem
+            // in case the elem is of struct type.
+            Value *ElemOffset =
+              Builder.CreateSub(Builder.CreatePtrToInt(RawPtr, Int64Ty),
+                                Builder.CreatePtrToInt(LockAddr, Int64Ty));
+            ElemOffset = Builder.CreateSub(ElemOffset, ConstantInt::get(Int64Ty, 8));
+            Offset = Builder.CreateAdd(Offset, ElemOffset);
+            // Add the new offset introduced by index * sizeof(pointed_elem)
+            ConstantInt *ArrayElemSize =
+              Builder.getInt64(DL.getTypeAllocSize(GEPPtrElemType));
+            Value *ArrayOffset = Builder.CreateMul(Index, ArrayElemSize);
+            Offset = Builder.CreateAdd(Offset, ArrayOffset);
+          }
+
           Value *KeyOffsetDest =
-            Builder.CreateAdd(KeyOffsetSrc, Offset, ptrName + "_KeyOffsetDest");
+            Builder.CreateAdd(KeyOffsetSrc, Offset, ptrName + "_KeyOffset");
 
           // Use UndefValue to create a new MMSafe pointer.
           StructType *MMPtrType =
