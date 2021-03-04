@@ -768,6 +768,7 @@ public:
           // Use UndefValue to create a new MMSafe pointer.
           StructType *MMPtrType =
             StructType::get(result->getType(), KeyOffsetSrc->getType());
+          MMPtrType->isMMPtr = true;
           llvm::UndefValue *newRet = llvm::UndefValue::get(MMPtrType);
           Value *insertPtr = Builder.CreateInsertValue(newRet, result, 0);
           return Builder.CreateInsertValue(insertPtr, KeyOffsetDest, 1);
