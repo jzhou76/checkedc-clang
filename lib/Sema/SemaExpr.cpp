@@ -8058,7 +8058,8 @@ checkPointerTypesForAssignment(Sema &S, QualType LHSType, ExprResult &RHS) {
 #endif
 
       // Traverse the RHS from right to left to see if the '&' operator is
-      // applied on a inner filed of a memory object pointed by an MMSafePtr.
+      // applied on an inner memory object of an object pointed by an MMSafePtr.
+      unsigned level = 0;   // Iteration level.
       while (true) {
         // Strip off cast and parentheses
         while (isa<CastExpr>(E) || isa<ParenExpr>(E)) {
@@ -8069,9 +8070,18 @@ checkPointerTypesForAssignment(Sema &S, QualType LHSType, ExprResult &RHS) {
         QualType EType = E->getType();
         if (EType->isCheckedPointerMMSafeType()) {
           return Sema::Compatible;
-        } else if (EType->isPointerType()) {
+        } else if (EType->isPointerType() && level != 0) {
           // In case the '&' gets the address of an object pointed by a
-          // raw C pointer.
+          // raw C pointer, Incompatible should be returned because it
+          // generates a raw pointer.
+          //
+          // The reason we need check the level of iteration is that we need
+          // differentiate the two cases in which EType is a PointerType:
+          // getting the address of a pointer field of a struct and
+          // getting the address of something pointed by a raw pointer that
+          // is a field of a struct. The former is allowed but the latter
+          // should be forbidden here because it generates a raw pointer.
+          // We use the depth of the parsing to distinguish the two cases.
           return Sema::Incompatible;
         }
 
@@ -8092,6 +8102,7 @@ checkPointerTypesForAssignment(Sema &S, QualType LHSType, ExprResult &RHS) {
             assert(0 && "Unknown Expr");
             break;
         }
+        level++;
       }
     }
 
