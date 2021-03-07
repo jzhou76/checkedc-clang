@@ -533,7 +533,7 @@ void CodeGenFunction::EmitDynamicKeyCheck(const Expr *E) {
       llvm::PointerType::getUnqual(MMArrayPtrType);
     CheckFnTy = llvm::FunctionType::get(VoidTy, {MMArrayPtrPtrType}, false);
     CheckFn = cast<Function>(M->getOrInsertFunction(
-                             StringRef("MMArrayKeyCheck"), CheckFnTy));
+                             StringRef("MMArrayPtrKeyCheck"), CheckFnTy));
     MMSafeArg = &*CheckFn->arg_begin();
     MMSafeArg->setName("mm_array_ptr_ptr");
 
