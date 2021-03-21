@@ -24,6 +24,7 @@
 #include "llvm/IR/DataLayout.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
+#include "CodeGenFunction.h"
 #include <memory>
 
 using namespace clang;
@@ -161,6 +162,23 @@ namespace {
       // Make sure to emit all elements of a Decl.
       for (DeclGroupRef::iterator I = DG.begin(), E = DG.end(); I != E; ++I)
         Builder->EmitTopLevelDecl(*I);
+
+      // Checked C: create the two key check functions if they do not exist.
+      // Because our key check optmization pass inserts key checks for
+      // function calls with mmsafe pointer arguments, when a module
+      // has such function calls but does not have dereferences to the types
+      // of mmsafe pointer arguments aforementioned, the compiler would not
+      // generate key check functions for such types of mmsafe pointers
+      // during CodeGenFunction::EmitDynamicKeyCheck(). Here the compiler
+      // ensures that it always generates the two key check functions for
+      // Checked C programs.  This may generate unneeded key check function(s),
+      // but it should be faster than first checking if there are dereferences
+      // to such mmsafe pointers before creating key check functions.
+      if (Builder->getLangOpts().CheckedC) {
+        CodeGenFunction CGF(*Builder);
+        CGF.GetOrInsertKeyCheckFn();
+        CGF.GetOrInsertKeyCheckFn(false);
+      }
 
       return true;
     }

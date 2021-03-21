@@ -20,10 +20,13 @@ using namespace llvm;
 
 #define DEBUG_TYPE "DynamicCheckCodeGen"
 
+#define MMPTRCHECK_FN "MMPtrKeyCheck"
+#define MMARRARYPTRCHECK_FN "MMArrayPtrKeyCheck"
+#define HIGH32BITS_MASK 0x00000000FFFFFFFF
+
 namespace {
   STATISTIC(NumDynamicChecksElided, "The # of dynamic checks elided (due to constant folding)");
   STATISTIC(NumDynamicChecksInserted, "The # of dynamic checks inserted");
-
   STATISTIC(NumDynamicChecksExplicit, "The # of dynamic _Dynamic_check(cond) checks found");
   STATISTIC(NumDynamicChecksNonNull, "The # of dynamic non-null checks found");
   STATISTIC(NumDynamicChecksOverflow, "The # of dynamic overflow checks found");
@@ -379,6 +382,99 @@ void CodeGenFunction::EmitDynamicKeyCheckResult(Value *Condition) {
 
 //
 // Checked C
+//
+// This functin retrieves or creates a dynamic key check function.
+//
+llvm::Function* CodeGenFunction::GetOrInsertKeyCheckFn(bool isMMPtr) {
+  llvm::Module &M = CGM.getModule();
+  Function *KeyCheckFn = isMMPtr ?  M.getFunction(MMPTRCHECK_FN) :
+                                    M.getFunction(MMARRARYPTRCHECK_FN);
+  if (KeyCheckFn) return KeyCheckFn;
+
+  // There are no such key check function. Create a key check function
+
+  BasicBlock *BBWithCheck = Builder.GetInsertBlock();
+  LLVMContext &Context = getLLVMContext();
+  llvm::PointerType *Int32PtrTy = llvm::Type::getInt32PtrTy(Context);
+  llvm::PointerType *Int64PtrTy = llvm::Type::getInt64PtrTy(Context);
+
+  llvm::FunctionType *KeyCheckFnTy = nullptr;
+  Value *Arg = nullptr;   // Formal parameter of pointer to the MMSafePtr.
+
+  if (isMMPtr) {
+    llvm::PointerType *MMPtrPtrTy =
+      llvm::StructType::get(VoidPtrTy, Int64Ty)->getPointerTo();
+    KeyCheckFnTy = llvm::FunctionType::get(VoidTy, {MMPtrPtrTy}, false);
+    KeyCheckFn = cast<Function>(M.getOrInsertFunction(
+                                StringRef(MMPTRCHECK_FN), KeyCheckFnTy));
+    Arg = &*KeyCheckFn->arg_begin();
+    Arg->setName("mm_ptr_ptr");
+
+    CurFn = KeyCheckFn;
+    Builder.SetInsertPoint(BasicBlock::Create(Context, "entry", KeyCheckFn));
+
+    // Get the KeyOffset metadata.
+    Value *KeyOffset_Ptr = Builder.CreateStructGEP(Arg, 1, "KeyOffset_Ptr");
+    Value *KeyOffset = Builder.CGBuilderBaseTy::CreateLoad(KeyOffset_Ptr, "KeyOffset");
+    // Extract the key from the offset-key metadata
+    Value *Key = Builder.CreateLShr(KeyOffset, 32, "Key");
+    // Cast the key to a 32-bit unsigned integer.
+    Key = Builder.CreateIntCast(Key, Builder.getInt32Ty(), false, "Key");
+    // Compute the address of the lock.
+    ConstantInt *OffsetMask = ConstantInt::get(Int64Ty, HIGH32BITS_MASK);
+    Value *Offset = Builder.CreateAnd(KeyOffset, OffsetMask, "Offset");
+    Value *ObjPtr_Ptr = Builder.CreateStructGEP(Arg, 0, "ObjPtr_Ptr");
+    Value *ObjPtr = Builder.CGBuilderBaseTy::CreateLoad(ObjPtr_Ptr, "ObjPtr");
+    Value *ObjPtrInt = Builder.CreatePtrToInt(ObjPtr, Int64Ty, "ObjPtrToInt");
+    Value *LockOffset = Builder.CreateAdd(Offset, ConstantInt::get(Int64Ty, 8));
+    Value *LockPtrInt = Builder.CreateSub(ObjPtrInt, LockOffset, "LockPtrInt");
+    Value *LockAddr = Builder.CreateIntToPtr(LockPtrInt, Int32PtrTy, "LockPtr");
+    // Get the lock of the memory object.
+    LoadInst *Lock = Builder.CGBuilderBaseTy::CreateLoad(LockAddr, "Lock");
+    // Create a comparison instrution for the key and lock.
+    Value *keyCheckInst = Builder.CreateICmpEQ(Key, Lock, "KeyChecking");
+    // Emit a dynamic checking block.
+    EmitDynamicKeyCheckResult(keyCheckInst);
+  } else {
+    llvm::PointerType *MMArrayPtrPtrTy =
+      llvm::StructType::get(VoidPtrTy, Int64Ty, Int64PtrTy)->getPointerTo();
+    KeyCheckFnTy = llvm::FunctionType::get(VoidTy, {MMArrayPtrPtrTy}, false);
+    KeyCheckFn = cast<Function>(M.getOrInsertFunction(
+                                StringRef(MMARRARYPTRCHECK_FN), KeyCheckFnTy));
+    Arg = &*KeyCheckFn->arg_begin();
+    Arg->setName("mm_array_ptr_ptr");
+
+    CurFn = KeyCheckFn;
+    Builder.SetInsertPoint(BasicBlock::Create(Context, "entry", KeyCheckFn));
+
+    // Load the key.
+    Value *Key_Ptr = Builder.CreateStructGEP(Arg, 1, "Key_Ptr");
+    Value *Key = Builder.CGBuilderBaseTy::CreateLoad(Key_Ptr, "Key");
+    // Load the lock.
+    Value *LockPtr_Ptr = Builder.CreateStructGEP(Arg, 2, "LockPtr_Ptr");
+    Value *LockAddr = Builder.CGBuilderBaseTy::CreateLoad(LockPtr_Ptr, "LockPtr");
+    LoadInst *Lock = Builder.CGBuilderBaseTy::CreateLoad(LockAddr, "Lock");
+    // Create a comparison instrution for the key and lock.
+    Value *keyCheckInst = Builder.CreateICmpEQ(Key, Lock, "Key_Checking");
+    // Emit a dynamic checking block.
+    EmitDynamicKeyCheckResult(keyCheckInst);
+  }
+
+  KeyCheckFn->setLinkage(GlobalVariable::InternalLinkage);
+
+  // Restore the BB insert point and the caller.
+  Builder.SetInsertPoint(BBWithCheck);
+  if (BBWithCheck) {
+    // If this function is called from CodeGeneratorImpl in ModuleBuilder,
+    // BBWithCheck would be empty.
+    CurFn = BBWithCheck->getParent();
+  }
+
+  return KeyCheckFn;
+}
+
+//
+// Checked C
 // EmitDynamicKeyCheck()
 //
 // This method dynamically checks if the key of a dereferenced _MM_ptr or
@@ -456,117 +552,21 @@ void CodeGenFunction::EmitDynamicKeyCheck(const Expr *E) {
 
   NumDynamicKeyCheck++;
 
-  // Start to get or create a dynamic check function and call it.
-  Value *MMSafePtr_Ptr = MMSafePtrLV.getPointer();
-  BasicBlock *BBWithCheck = Builder.GetInsertBlock();
-  LLVMContext &Context = getLLVMContext();
-  llvm::PointerType *Int32PtrTy = llvm::Type::getInt32PtrTy(Context);
-  llvm::PointerType *Int64PtrTy = llvm::Type::getInt64PtrTy(Context);
-  StringRef ptrName = MMSafePtr_Ptr->getName();
-  llvm::Module *M = CurFn->getParent();
-
-  Function *CheckFn = nullptr;
-  llvm::FunctionType *CheckFnTy = nullptr;
-  Value *MMSafeArg = nullptr;   // Formal parameter of pointer to the MMSafePtr.
+  // Get or create the dynamic key check function.
+  Function *KeyCheckFn = nullptr;
   if (E->getType()->isCheckedPointerMMType()) {
+    KeyCheckFn = GetOrInsertKeyCheckFn() ;
     NumDynamicMMPtrCheck++;
-    // Insert a call to check _MM_ptr.
-
-    llvm::StructType *MMPtrType = llvm::StructType::get(VoidPtrTy, Int64Ty);
-    llvm::PointerType *MMPtrPtrType = llvm::PointerType::getUnqual(MMPtrType);
-    CheckFnTy = llvm::FunctionType::get(VoidTy, {MMPtrPtrType}, false);
-    CheckFn = cast<Function>(M->getOrInsertFunction(
-                             StringRef("MMPtrKeyCheck"), CheckFnTy));
-    MMSafeArg = &*CheckFn->arg_begin();
-    MMSafeArg->setName("mm_ptr_ptr");
-
-    if (CheckFn->empty()) {
-      CheckFn->setLinkage(GlobalVariable::InternalLinkage);
-      CurFn = CheckFn;
-      Builder.SetInsertPoint(BasicBlock::Create(Context, "entry", CheckFn));
-
-      // Get the KeyOffset metadata.
-      Value *OffsetKey_Ptr =
-        Builder.CreateStructGEP(MMSafeArg, 1, ptrName + "_KeyOffset_Ptr");
-      Value *KeyOffset =
-        Builder.CGBuilderBaseTy::CreateLoad(OffsetKey_Ptr, ptrName + "_KeyOffset");
-      // Extract the key from the offset-key metadata
-      Value *Key = Builder.CreateLShr(KeyOffset, 32, ptrName + "_Key");
-      // Cast the key to a 32-bit unsigned integer.
-      Key = Builder.CreateIntCast(Key, Builder.getInt32Ty(), false);
-      // Compute the address of the lock.
-      ConstantInt *OffsetMask = ConstantInt::get(Int64Ty, 0x00000000ffffffff);
-      Value *Offset =
-        Builder.CreateAnd(KeyOffset, OffsetMask, ptrName + "_Offset");
-      Value *objPtr_Ptr = Builder.CreateStructGEP(MMSafeArg, 0,
-                                                  ptrName + "_ObjPtr_Ptr");
-      Value *objPtr =
-        Builder.CGBuilderBaseTy::CreateLoad(objPtr_Ptr, ptrName + "_ObjPtr");
-      Value *objPtrInt =
-        Builder.CreatePtrToInt(objPtr, Int64Ty, ptrName + "_ObjPtrToInt");
-      Value *LockOffset = Builder.CreateAdd(Offset, ConstantInt::get(Int64Ty, 8));
-      Value *LockPtrInt = Builder.CreateSub(objPtrInt, LockOffset,
-                                            ptrName + "_LockPtrInt");
-      Value *LockAddr = Builder.CreateIntToPtr(LockPtrInt, Int32PtrTy,
-                                               ptrName + "_LockPtr");
-      // Get the lock of the memory object.
-      LoadInst *Lock =
-        Builder.CGBuilderBaseTy::CreateLoad(LockAddr, ptrName + "_Lock");
-      // Create a comparison instrution for the key and lock.
-      Value *keyCheckInst =
-        Builder.CreateICmpEQ(Key, Lock, ptrName + "_Key_Checking");
-      // Emit a dynamic checking block.
-      EmitDynamicKeyCheckResult(keyCheckInst);
-
-      // Restore the BB insert point and the caller.
-      Builder.SetInsertPoint(BBWithCheck);
-      CurFn = BBWithCheck->getParent();
-    }
   } else {
+    KeyCheckFn = GetOrInsertKeyCheckFn(false);
     NumDynamicMMArrayPtrCheck++;
-    // Insert a call to check _MM_array_ptr.
-
-    llvm::StructType *MMArrayPtrType =
-      llvm::StructType::get(VoidPtrTy, Int64Ty, Int64PtrTy);
-    // Do we need to use PointerType::get() to specifiy AddressSpace?
-    llvm::PointerType *MMArrayPtrPtrType =
-      llvm::PointerType::getUnqual(MMArrayPtrType);
-    CheckFnTy = llvm::FunctionType::get(VoidTy, {MMArrayPtrPtrType}, false);
-    CheckFn = cast<Function>(M->getOrInsertFunction(
-                             StringRef("MMArrayPtrKeyCheck"), CheckFnTy));
-    MMSafeArg = &*CheckFn->arg_begin();
-    MMSafeArg->setName("mm_array_ptr_ptr");
-
-    if(CheckFn->empty()) {
-      CheckFn->setLinkage(GlobalVariable::InternalLinkage);
-      CurFn = CheckFn;
-      Builder.SetInsertPoint(BasicBlock::Create(Context, "entry", CheckFn));
-
-      // Load the key and lock, and compare them.
-      Value *Key_Ptr =
-        Builder.CreateStructGEP(MMSafeArg, 1, ptrName + "_Key_Ptr");
-      Value *Key = Builder.CGBuilderBaseTy::CreateLoad(Key_Ptr, ptrName + "_Key");
-      Value *LockPtr_Ptr =
-        Builder.CreateStructGEP(MMSafeArg, 2, ptrName + "_LockPtr_Ptr");
-      Value *LockAddr =
-        Builder.CGBuilderBaseTy::CreateLoad(LockPtr_Ptr, ptrName + "_LockPtr");
-      LoadInst *Lock =
-        Builder.CGBuilderBaseTy::CreateLoad(LockAddr, ptrName + "_Lock");
-      // Create a comparison instrution for the key and lock.
-      Value *keyCheckInst =
-        Builder.CreateICmpEQ(Key, Lock, ptrName + "_Key_Checking");
-      // Emit a dynamic checking block.
-      EmitDynamicKeyCheckResult(keyCheckInst);
-
-      Builder.SetInsertPoint(BBWithCheck);
-      CurFn = BBWithCheck->getParent();
-    }
   }
 
-  // Cast the argument to the type of the formal parameter of the
-  // check function, and make a call to it.
-  MMSafePtr_Ptr = Builder.CreatePointerCast(MMSafePtr_Ptr, MMSafeArg->getType());
-  Builder.CreateCall(CheckFnTy, CheckFn, {MMSafePtr_Ptr});
+  // Cast the argument to the type of the formal parameter of the check function.
+  Value *MMSafePtr_Ptr = Builder.CreatePointerCast(MMSafePtrLV.getPointer(),
+                                                   KeyCheckFn->arg_begin()->getType());
+  // Insert a call to the key check function.
+  Builder.CreateCall(KeyCheckFn->getFunctionType(), KeyCheckFn, {MMSafePtr_Ptr});
 }
 
 

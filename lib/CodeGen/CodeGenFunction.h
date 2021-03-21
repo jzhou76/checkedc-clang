@@ -2940,6 +2940,7 @@ public:
   void EmitDynamicCheckBlocks(llvm::Value *Condition);
   void EmitDynamicKeyCheckResult(llvm::Value *Condition);
   void EmitDynamicKeyCheck(const Expr *E);
+  llvm::Function* GetOrInsertKeyCheckFn(bool isMMPtr = true);
   llvm::BasicBlock *EmitDynamicCheckFailedBlock();
   llvm::BasicBlock *EmitNulltermWriteAdditionalCheck(const Address PtrAddr,
                                                      const Address Upper,
