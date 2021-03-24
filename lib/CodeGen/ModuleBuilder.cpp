@@ -174,10 +174,24 @@ namespace {
       // Checked C programs.  This may generate unneeded key check function(s),
       // but it should be faster than first checking if there are dereferences
       // to such mmsafe pointers before creating key check functions.
+      //
+      // FIXME: Putting this piece of code here is not ideal because it will
+      // be called many many times for a module and only one call is needed.
+      // We should find a better place to place this piece of code; or we can
+      // modify CodeGenFunction to create these function before calls with
+      // mmsafe pointers arguments during function generation, similar to
+      // what we did for inserting key checks.
       if (Builder->getLangOpts().CheckedC) {
-        CodeGenFunction CGF(*Builder);
-        CGF.GetOrInsertKeyCheckFn();
-        CGF.GetOrInsertKeyCheckFn(false);
+        if (!Builder->hasMMPtrKeyCheckFn()) {
+          CodeGenFunction CGF(*Builder);
+          CGF.GetOrInsertKeyCheckFn();
+          Builder->setHasMMPtrKeyCheckFnTrue();
+        }
+        if (!Builder->hasMMArrayPtrKeyCheckFn()) {
+          CodeGenFunction CGF(*Builder);
+          CGF.GetOrInsertKeyCheckFn(false);
+          Builder->setHasMMArrayPtrKeyCheckFnTrue();
+        }
       }
 
       return true;

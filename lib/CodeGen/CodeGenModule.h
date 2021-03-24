@@ -535,6 +535,9 @@ private:
   MetadataTypeMap VirtualMetadataIdMap;
   MetadataTypeMap GeneralizedMetadataIdMap;
 
+  // Checked C: indicate if the module has defined the two key check functions.
+  bool MMPtrKeyCheckFn = false, MMArrayPtrKeyCheckFn = false;
+
 public:
   CodeGenModule(ASTContext &C, const HeaderSearchOptions &headersearchopts,
                 const PreprocessorOptions &ppopts,
@@ -1310,6 +1313,20 @@ public:
   /// \param QT is the clang QualType of the null pointer.
   llvm::Constant *getNullPointer(llvm::PointerType *T, QualType QT);
 
+  // Checked C
+  void setHasMMPtrKeyCheckFnTrue() {
+    MMPtrKeyCheckFn = true;
+  }
+  bool hasMMPtrKeyCheckFn() const {
+    return MMPtrKeyCheckFn;
+  }
+
+  void setHasMMArrayPtrKeyCheckFnTrue() {
+    MMArrayPtrKeyCheckFn = true;
+  }
+  bool hasMMArrayPtrKeyCheckFn() const {
+    return MMArrayPtrKeyCheckFn;
+  }
 private:
   llvm::Constant *GetOrCreateLLVMFunction(
       StringRef MangledName, llvm::Type *Ty, GlobalDecl D, bool ForVTable,
