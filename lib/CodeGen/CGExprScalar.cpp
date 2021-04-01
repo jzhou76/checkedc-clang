@@ -690,8 +690,9 @@ public:
 
         // Get the index of the struct or array.
         Value *Index = NULL;
-        if (isArray && GEP->getNumIndices() == 1) {
-          // "&p[i]"
+        if (GEP->getNumIndices() == 1) {
+          // The case of getting the address of an item from an mmarrayptr.
+          // e.g., "&p[i]" or "&p->p1[i]" where p and p1 are mmarrayptr.
           Index = GEP->getOperand(1);
         } else {
           Index = GEP->getOperand(2);
