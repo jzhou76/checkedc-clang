@@ -629,7 +629,13 @@ public:
             break;
           case Expr::ArraySubscriptExprClass:
             e = cast<ArraySubscriptExpr>(e)->getBase();
-            isArray = true;
+            e = isa<CastExpr>(e) ? cast<CastExpr>(e)->getSubExpr() : e;
+            // We need differentiate applying "[]" on an array inside a struct
+            // and on a pointer. For example, for "&p->arr[2]", arr may be an
+            // array inside a struct pointed by p, or it might be a pointer.
+            if (e->getType()->isArrayType() ||
+                e->getStmtClass() == Expr::DeclRefExprClass)
+              isArray = true;
             break;
           case Expr::UnaryOperatorClass:
             e = cast<UnaryOperator>(e)->getSubExpr();
@@ -647,7 +653,7 @@ public:
           break;
         } else if (e->getType()->isPointerType() && !isArray) {
           // In the access chain, if a raw C pointer dereference is seen
-          // before a checked pointer dereference, the parsing can stop.
+          // before a checked pointer dereference, the parsing should stop.
           // For example, in "&p->p1->i" p is an mmptr but p1 is a C pointer.
           // Here we also need confirm the pointer is not an array because
           // sometimes it's hard to differentiate an array pointer from just
