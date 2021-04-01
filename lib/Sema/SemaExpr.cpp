@@ -8363,6 +8363,72 @@ Sema::CheckAssignmentConstraints(QualType LHSType, ExprResult &RHS,
   LHSType = Context.getCanonicalType(LHSType).getUnqualifiedType();
   RHSType = Context.getCanonicalType(RHSType).getUnqualifiedType();
 
+  // Checked C
+  // Disallow assigning mmsafe pointers generated from an '&' expression
+  // to a raw pointer.
+  //
+  // FIXME: Currently the RHSType of the result of an addres-of expression
+  // is always a raw pointer. For example, The type of "&p->i" is "int *" if
+  // i is an integer, regardless of the pointer type of p. This would give
+  // programmers a misleading error message. For example,
+  // "int *pi = &p->i;" would raise an error like
+  //    "initializing 'int *' with an expression of incompatible type 'int *'".
+  // To fix this issue, we need set the type of the RHS correctly at a much
+  // earlier stage.
+  if (isa<PointerType>(LHSType.getTypePtr()) &&
+      isa<PointerType>(RHSType.getTypePtr())) {
+    CheckedPointerKind lhkind = cast<PointerType>(LHSType)->getKind();
+    CheckedPointerKind rhkind = cast<PointerType>(RHSType)->getKind();
+    if (lhkind == CheckedPointerKind::Unchecked &&
+        rhkind == CheckedPointerKind::Unchecked) {
+      UnaryOperator *UO = dyn_cast<UnaryOperator>(RHS.get());
+      if (UO && UO->isAddressOf()) {
+        Expr *E = UO->getSubExpr();
+
+        // Traverse the RHS from right to left to see if the '&' operator is
+        // applied on an inner memory object of an object pointed by an MMSafePtr.
+        unsigned level = 0;   // Iteration level.
+        bool reachedTop = false;
+        while (true && !reachedTop) {
+          // Strip off cast and parentheses
+          while (isa<CastExpr>(E) || isa<ParenExpr>(E)) {
+            E = isa<CastExpr>(E) ? cast<CastExpr>(E)->getSubExpr() :
+              cast<ParenExpr>(E)->getSubExpr();
+          }
+
+          QualType EType = E->getType();
+          if (level != 0 && EType->isCheckedPointerMMSafeType()) {
+            return Sema::Incompatible;
+          } else if (EType->isPointerType() && level != 0) {
+            // The case of getting the address of something pointed by a raw pointer.
+            break;
+          }
+
+          switch(E->getStmtClass()) {
+            case Expr::MemberExprClass:
+              E = cast<MemberExpr>(E)->getBase();
+              break;
+            case Expr::ArraySubscriptExprClass:
+              E = cast<ArraySubscriptExpr>(E)->getBase();
+              break;
+            case Expr::UnaryOperatorClass:
+              E = cast<UnaryOperator>(E)->getSubExpr();
+              break;
+            case Expr::DeclRefExprClass:
+              // Reached the top of the Expr.
+              reachedTop = true;
+              break;
+            default:
+              assert(0 && "Unknown Expr");
+              break;
+          }
+
+          level++;
+        }
+      }
+    }
+  }
+
   // Common case: no conversion required.
   if (LHSType == RHSType) {
     Kind = CK_NoOp;
