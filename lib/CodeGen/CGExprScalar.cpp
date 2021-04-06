@@ -610,32 +610,23 @@ public:
     if (isa<GetElementPtrInst>(result)) {
       // This Expr gets the address of an object in a struct or an array.
       Expr *e = E->getSubExpr();
+      // Strip off casts and parentheses.
+      while (isa<CastExpr>(e) || isa<ParenExpr>(e)) {
+        e = isa<CastExpr>(e) ? cast<CastExpr>(e)->getSubExpr() :
+          cast<ParenExpr>(e)->getSubExpr();
+        }
       bool hasMMSafePtrExpr = false;
 
-      // Do a right-to left traversal of the Expr to see if the '&' gets the
+      // Do a right-to-left traversal of the Expr to see if the '&' gets the
       // address from an object pointed by an MMSafe Pointer.
       bool reachedTop = false;  // The parsing has reached to the top left.
-      bool isArray = false;     // If the Expr is an array during parsing.
       while (!reachedTop) {
-        // Strip off casts and parentheses.
-        while (isa<CastExpr>(e) || isa<ParenExpr>(e)) {
-          e = isa<CastExpr>(e) ? cast<CastExpr>(e)->getSubExpr() :
-                                 cast<ParenExpr>(e)->getSubExpr();
-        }
-
         switch (e->getStmtClass()) {
           case Expr::MemberExprClass:
             e = cast<MemberExpr>(e)->getBase();
             break;
           case Expr::ArraySubscriptExprClass:
             e = cast<ArraySubscriptExpr>(e)->getBase();
-            e = isa<CastExpr>(e) ? cast<CastExpr>(e)->getSubExpr() : e;
-            // We need differentiate applying "[]" on an array inside a struct
-            // and on a pointer. For example, for "&p->arr[2]", arr may be an
-            // array inside a struct pointed by p, or it might be a pointer.
-            if (e->getType()->isArrayType() ||
-                e->getStmtClass() == Expr::DeclRefExprClass)
-              isArray = true;
             break;
           case Expr::UnaryOperatorClass:
             e = cast<UnaryOperator>(e)->getSubExpr();
@@ -648,22 +639,33 @@ public:
             break;
         }
 
+        // Strip off casts and parentheses.
+        while (isa<CastExpr>(e) || isa<ParenExpr>(e)) {
+          e = isa<CastExpr>(e) ? cast<CastExpr>(e)->getSubExpr() :
+                                 cast<ParenExpr>(e)->getSubExpr();
+        }
+
         if (e->getType()->isCheckedPointerMMSafeType()) {
           hasMMSafePtrExpr = true;
           break;
-        } else if (e->getType()->isPointerType() && !isArray) {
+        } else if (e->getType()->isPointerType()) {
           // In the access chain, if a raw C pointer dereference is seen
           // before a checked pointer dereference, the parsing should stop.
           // For example, in "&p->p1->i" p is an mmptr but p1 is a C pointer.
-          // Here we also need confirm the pointer is not an array because
+          // Note that we also need to know the pointer is not an array because
           // sometimes it's hard to differentiate an array pointer from just
           // a pointer: ArraySubscriptExpr::getBase() returns an Expr of
           // PointerType.  For example, for "&p->arr[3]" where arr is of
           // type Node, after running the getBase() method on the array Expr,
-          // it returns an Expr of PointerType "Node *".
+          // it returns an Expr of PointerType "Node *", which is an
+          // ImplicitCastExpr. The CastExpr removal loop above should be able to
+          // remove the PointerType cast of an array.
+          //
+          // There is no need to differentiate applying "[]" on an array inside
+          // a struct and on a pointer. For example, for "&p->arr[2]", arr may
+          // be an array inside a struct pointed by p, or it might be a pointer.
           break;
         }
-        isArray = false;
       }
 
       // Return the result if no MMSafe pointer is found in the access chain.
