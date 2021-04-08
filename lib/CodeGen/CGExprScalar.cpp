@@ -607,6 +607,13 @@ public:
     // The following code checks if it is this case and if so constructs
     // and returns an MMSafe pointer.
 
+    // Remove bit cast. This is needed when a uinon member is involved, e.g.,
+    // &p->i where p points to a union which has a member i.
+    if (isa<llvm::BitCastInst>(result)) {
+      // Do we need to put this to a loop just in case there are more than one cast?
+      result = cast<llvm::Instruction>(result)->getOperand(0);
+    }
+
     if (isa<GetElementPtrInst>(result)) {
       // This Expr gets the address of an object in a struct or an array.
       Expr *e = E->getSubExpr();
@@ -614,7 +621,7 @@ public:
       while (isa<CastExpr>(e) || isa<ParenExpr>(e)) {
         e = isa<CastExpr>(e) ? cast<CastExpr>(e)->getSubExpr() :
           cast<ParenExpr>(e)->getSubExpr();
-        }
+      }
       bool hasMMSafePtrExpr = false;
 
       // Do a right-to-left traversal of the Expr to see if the '&' gets the
@@ -728,6 +735,11 @@ public:
           }
         }
 
+        // In case when a pointer is used to access a member of a union.
+        if (isa<llvm::BitCastInst>(GEPPtr)) {
+          GEPPtr = cast<llvm::BitCastInst>(GEPPtr)->getOperand(0);
+        }
+
         if (isa<llvm::LoadInst>(GEPPtr)) {
           // The GEP's pointer is a Load. This should be a load that loads
           // from a pointer to an MMSafe pointer because if the program can
@@ -792,16 +804,22 @@ public:
         }
       }
     } else {
-      // This Expr directly gets the address of a variable, e.g., p = &obj;.
+      // Until now we have seen three cases where an '&' expr would end up here.
+      // 1. Directly getting the address of a variable, e.g., p = &obj;.
+      // 2. Something like &*p.
+      // 3. Getting the address of union member, e.g., &p->i where p points to
+      // a union with a member i. This is actually similar to the second case.
       if (isa<llvm::LoadInst>(result)) {
-        // This should be an Expr like &*p.
+        // This should be case 2 or 3.
         llvm::LoadInst *Load = cast<llvm::LoadInst>(result);
         Value *LoadPtr = Load->getPointerOperand();
         if (cast<llvm::PointerType>(LoadPtr->getType())
             ->getElementType()->isMMSafePointerTy()) {
-          // This is an Expr like &*p where p is an MMSafe pointer.
           return Builder.CGBuilderBaseTy::CreateLoad(LoadPtr);
         }
+      } else if (isa<llvm::ExtractValueInst>(result)) {
+        // Do we need this condition?
+        assert(0 && "Unhandled cases during address-of expression generation");
       }
     }
 
