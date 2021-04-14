@@ -8068,7 +8068,9 @@ checkPointerTypesForAssignment(Sema &S, QualType LHSType, ExprResult &RHS) {
         }
 
         QualType EType = E->getType();
-        if (EType->isCheckedPointerMMSafeType()) {
+        if (EType->isCheckedPointerMMSafeType() && level != 0) {
+          // level == 0 means getting the address of an mmsafe ptr, but not
+          // getting something pointed by an mmsafe ptr.
           return Sema::Compatible;
         } else if (EType->isPointerType() && level != 0) {
           // In case the '&' gets the address of an object pointed by a
@@ -8158,7 +8160,7 @@ checkPointerTypesForAssignment(Sema &S, QualType LHSType, ExprResult &RHS) {
   //   would allow silent subverison of bounds.
   // - Disallow conversions from another pointer types to Nt_array_ptr.
   //   The source may not be null-terminated.
-  // - Allow implicit conversions from any kind of pointer to _Ptr 
+  // - Allow implicit conversions from any kind of pointer to _Ptr
   //   or _Array_ptr
 
   if (rhkind != CheckedPointerKind::Unchecked &&
