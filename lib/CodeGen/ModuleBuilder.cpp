@@ -163,6 +163,7 @@ namespace {
       for (DeclGroupRef::iterator I = DG.begin(), E = DG.end(); I != E; ++I)
         Builder->EmitTopLevelDecl(*I);
 
+#if 0
       // Checked C: create the two key check functions if they do not exist.
       // Because our key check optmization pass inserts key checks for
       // function calls with mmsafe pointer arguments, when a module
@@ -193,6 +194,7 @@ namespace {
           Builder->setHasMMArrayPtrKeyCheckFnTrue();
         }
       }
+#endif
 
       return true;
     }
