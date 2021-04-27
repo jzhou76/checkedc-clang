@@ -8098,7 +8098,9 @@ checkPointerTypesForAssignment(Sema &S, QualType LHSType, ExprResult &RHS) {
             E = cast<UnaryOperator>(E)->getSubExpr();
             break;
           case Expr::DeclRefExprClass:
-            // Reached the top of the Expr.
+            // Reached the top (leftmost) of the Expr.
+            // We allow getting the address of an _multiple stack/global object.
+            if (EType.isMultipleQualified()) return Sema::Compatible;
             return Sema::Incompatible;
           default:
             assert(0 && "Unknown Expr");

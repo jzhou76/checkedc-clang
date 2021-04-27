@@ -4170,7 +4170,7 @@ void Sema::MergeVarDeclTypes(VarDecl *New, VarDecl *Old,
   } else {
     // C 6.2.7p2:
     //   All declarations that refer to the same object or function shall have
-    //   compatible type.
+    //   compatible type
     MergedT = Context.mergeTypes(New->getType(), Old->getType());
   }
   if (MergedT.isNull()) {

@@ -3909,6 +3909,12 @@ void Parser::ParseDeclarationSpecifiers(DeclSpec &DS,
                                  getLangOpts());
       break;
 
+    // Checked C: _multiple
+    case tok::kw__multiple:
+      isInvalid = DS.SetTypeQual(DeclSpec::TQ_multiple, Loc, PrevSpec, DiagID,
+                                 getLangOpts());
+      break;
+
     // C++ typename-specifier:
     case tok::kw_typename:
       if (TryAnnotateTypeOrScopeToken()) {
@@ -5028,6 +5034,7 @@ bool Parser::isTypeSpecifierQualifier() {
   case tok::kw_volatile:
   case tok::kw_restrict:
   case tok::kw__Sat:
+  case tok::kw__multiple:  // Checked C
 
     // Debugger support.
   case tok::kw___unknown_anytype:
@@ -5194,6 +5201,7 @@ bool Parser::isDeclarationSpecifier(bool DisambiguatingWithExpression) {
   case tok::kw_volatile:
   case tok::kw_restrict:
   case tok::kw__Sat:
+  case tok::kw__multiple:  // Checked C
 
     // function-specifier
   case tok::kw_inline:
@@ -5477,6 +5485,10 @@ void Parser::ParseTypeQualifierListOpt(
       isInvalid = DS.SetTypeQual(DeclSpec::TQ_atomic, Loc, PrevSpec, DiagID,
                                  getLangOpts());
       break;
+    // Checked C
+    case tok::kw__multiple:
+      isInvalid = DS.SetTypeQual(DeclSpec::TQ_multiple, Loc, PrevSpec, DiagID,
+                                 getLangOpts());
 
     // OpenCL qualifiers:
     case tok::kw___private:

@@ -1405,15 +1405,15 @@ public:
 
   QualType BuildQualifiedType(QualType T, SourceLocation Loc, Qualifiers Qs,
                               const DeclSpec *DS = nullptr);
-  QualType BuildQualifiedType(QualType T, SourceLocation Loc, unsigned CVRA,
-                              const DeclSpec *DS = nullptr);
+  QualType BuildQualifiedType(QualType T, SourceLocation Loc, unsigned CVRAM,
+                              const DeclSpec *DS = nullptr); // Updated for Checked C
   QualType BuildPointerType(QualType T, CheckedPointerKind kind,
                             SourceLocation Loc, DeclarationName Entity);
   QualType BuildReferenceType(QualType T, bool LValueRef,
                               SourceLocation Loc, DeclarationName Entity);
   QualType BuildArrayType(QualType T, ArrayType::ArraySizeModifier ASM,
                           Expr *ArraySize, unsigned Quals,
-                          CheckedArrayKind Kind, SourceRange Brackets, 
+                          CheckedArrayKind Kind, SourceRange Brackets,
                           DeclarationName Entity);
   QualType BuildVectorType(QualType T, Expr *VecSize, SourceLocation AttrLoc);
   QualType BuildExtVectorType(QualType T, Expr *ArraySize,

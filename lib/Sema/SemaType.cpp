@@ -756,7 +756,9 @@ static void diagnoseAndRemoveTypeQualifiers(Sema &S, const DeclSpec &DS,
   for (QualLoc Qual : {QualLoc(DeclSpec::TQ_const, DS.getConstSpecLoc()),
                        QualLoc(DeclSpec::TQ_restrict, DS.getRestrictSpecLoc()),
                        QualLoc(DeclSpec::TQ_volatile, DS.getVolatileSpecLoc()),
-                       QualLoc(DeclSpec::TQ_atomic, DS.getAtomicSpecLoc())}) {
+                       QualLoc(DeclSpec::TQ_atomic, DS.getAtomicSpecLoc()),
+                       // Checked C: _multiple
+                       QualLoc(DeclSpec::TQ_multiple, DS.getMultipleSpecLoc())}) {
     if (!(RemoveTQs & Qual.first))
       continue;
 
@@ -1812,19 +1814,21 @@ QualType Sema::BuildQualifiedType(QualType T, SourceLocation Loc,
   return Context.getQualifiedType(T, Qs);
 }
 
+/// Checked C: "CVRAU" was updated to "CVRAUM" to support "_multiple".
 QualType Sema::BuildQualifiedType(QualType T, SourceLocation Loc,
-                                  unsigned CVRAU, const DeclSpec *DS) {
+                                  unsigned CVRAUM, const DeclSpec *DS) {
   if (T.isNull())
     return QualType();
 
   // Ignore any attempt to form a cv-qualified reference.
   if (T->isReferenceType())
-    CVRAU &=
+    CVRAUM &=
         ~(DeclSpec::TQ_const | DeclSpec::TQ_volatile | DeclSpec::TQ_atomic);
 
   // Convert from DeclSpec::TQ to Qualifiers::TQ by just dropping TQ_atomic and
   // TQ_unaligned;
-  unsigned CVR = CVRAU & ~(DeclSpec::TQ_atomic | DeclSpec::TQ_unaligned);
+  unsigned CVR = CVRAUM & ~(DeclSpec::TQ_atomic | DeclSpec::TQ_unaligned |
+                           DeclSpec::TQ_multiple);
 
   // C11 6.7.3/5:
   //   If the same qualifier appears more than once in the same
@@ -1834,7 +1838,7 @@ QualType Sema::BuildQualifiedType(QualType T, SourceLocation Loc,
   // It's not specified what happens when the _Atomic qualifier is applied to
   // a type specified with the _Atomic specifier, but we assume that this
   // should be treated as if the _Atomic qualifier appeared multiple times.
-  if (CVRAU & DeclSpec::TQ_atomic && !T->isAtomicType()) {
+  if (CVRAUM & DeclSpec::TQ_atomic && !T->isAtomicType()) {
     // C11 6.7.3/5:
     //   If other qualifiers appear along with the _Atomic qualifier in a
     //   specifier-qualifier-list, the resulting type is the so-qualified
@@ -1848,11 +1852,15 @@ QualType Sema::BuildQualifiedType(QualType T, SourceLocation Loc,
     if (T.isNull())
       return T;
     Split.Quals.addCVRQualifiers(CVR);
+    // Jie Zhou: The next line keeps the _multiple qualifier, if there is one.
+    // But where is the __unaligned qualifier, if there is one?
+    Split.Quals.setMultiple(CVRAUM & DeclSpec::TQ_multiple);
     return BuildQualifiedType(T, Loc, Split.Quals);
   }
 
   Qualifiers Q = Qualifiers::fromCVRMask(CVR);
-  Q.setUnaligned(CVRAU & DeclSpec::TQ_unaligned);
+  Q.setUnaligned(CVRAUM & DeclSpec::TQ_unaligned);
+  Q.setMultiple(CVRAUM & DeclSpec::TQ_multiple);  // Checked C
   return BuildQualifiedType(T, Loc, Q, DS);
 }
 

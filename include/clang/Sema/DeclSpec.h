@@ -323,7 +323,9 @@ public:
     TQ_unaligned   = 8,
     // This has no corresponding Qualifiers::TQ value, because it's not treated
     // as a qualifier in our type system.
-    TQ_atomic      = 16
+    TQ_atomic      = 16,
+    // Checked C
+    TQ_multiple    = 32,
   };
 
   /// ParsedSpecifiers - Flags to query which specifiers were applied.  This is
@@ -363,7 +365,8 @@ private:
   unsigned TypeSpecSat : 1;
 
   // type-qualifiers
-  unsigned TypeQualifiers : 5;  // Bitwise OR of TQ.
+  // Checked C: updated TypeQualifiers from 5 to 6 for the _multiple qualifier.
+  unsigned TypeQualifiers : 6;  // Bitwise OR of TQ.
 
   // function-specifier
   unsigned FS_inline_specified : 1;
@@ -416,7 +419,7 @@ private:
   SourceLocation TSTNameLoc;
   SourceRange TypeofParensRange;
   SourceLocation TQ_constLoc, TQ_restrictLoc, TQ_volatileLoc, TQ_atomicLoc,
-      TQ_unalignedLoc;
+      TQ_unalignedLoc, TQ_multipleLoc;  // Added TQ_multipleLoc
   SourceLocation FS_inlineLoc, FS_virtualLoc, FS_explicitLoc, FS_noreturnLoc;
   SourceLocation FS_forceinlineLoc;
   // Checked C - checked keyword location
@@ -588,6 +591,8 @@ public:
   SourceLocation getAtomicSpecLoc() const { return TQ_atomicLoc; }
   SourceLocation getUnalignedSpecLoc() const { return TQ_unalignedLoc; }
   SourceLocation getPipeLoc() const { return TQ_pipeLoc; }
+  // Checked C
+  SourceLocation getMultipleSpecLoc() const { return TQ_multipleLoc; }
 
   /// Clear out all of the type qualifiers.
   void ClearTypeQualifiers() {
@@ -598,6 +603,8 @@ public:
     TQ_atomicLoc = SourceLocation();
     TQ_unalignedLoc = SourceLocation();
     TQ_pipeLoc = SourceLocation();
+    // Checked C
+    TQ_multipleLoc = SourceLocation();
   }
 
   // function-specifier
@@ -660,10 +667,12 @@ public:
     FS_itypeforanyloc= SourceLocation();
   }
 
-  /// This method calls the passed in handler on each CVRU qual being
+  /// This method calls the passed in handler on each CVRUM qual being
   /// set.
   /// Handle - a handler to be invoked.
-  void forEachCVRUQualifier(
+  ///
+  /// Checked C: added "M" to "CVRU".
+  void forEachCVRUMQualifier(
       llvm::function_ref<void(TQ, StringRef, SourceLocation)> Handle);
 
   /// This method calls the passed in handler on each qual being
@@ -1239,7 +1248,8 @@ struct DeclaratorChunk {
 
   struct PointerTypeInfo {
     /// The type qualifiers: const/volatile/restrict/unaligned/atomic.
-    unsigned TypeQuals : 5;
+    // Checked C: plus multiple
+    unsigned TypeQuals : 6;
 
     /// The location of the const-qualifier, if any.
     unsigned ConstQualLoc;
@@ -1255,6 +1265,9 @@ struct DeclaratorChunk {
 
     /// The location of the __unaligned-qualifier, if any.
     unsigned UnalignedQualLoc;
+
+    /// Checked C: The location of the _multiple-qualifier, if any.
+    unsigned MMSafeQualLoc;
 
     void destroy() {
     }
@@ -1272,7 +1285,8 @@ struct DeclaratorChunk {
   struct ArrayTypeInfo {
     /// The type qualifiers for the array:
     /// const/volatile/restrict/__unaligned/_Atomic.
-    unsigned TypeQuals : 5;
+    // Checked C: plus _multiple
+    unsigned TypeQuals : 6;
 
     /// True if this dimension included the 'static' keyword.
     unsigned hasStatic : 1;

@@ -55,6 +55,8 @@
 #include <type_traits>
 #include <utility>
 
+#include "llvm/Support/raw_ostream.h"
+
 namespace clang {
 
 class ExtQuals;
@@ -178,15 +180,28 @@ public:
   };
 
   enum {
-    /// The maximum supported address space number.
+    /// Obsolete: The maximum supported address space number.
     /// 23 bits should be enough for anyone.
-    MaxAddressSpace = 0x7fffffu,
+    //
+    /// Updated for Checked C: There are now 21 bits for address space.
+    MaxAddressSpace = 0x1fffffu,
 
     /// The width of the "fast" qualifier mask.
     FastWidth = 3,
 
     /// The fast qualifier mask.
     FastMask = (1 << FastWidth) - 1
+  };
+
+  // Checked C
+  enum CheckedCQual {
+    CheckedC_None,
+
+    // For stack & global objects to which pointers might point to heap.
+    Multiple,
+
+    // For objects shared between checked and unchecked code
+    Shared
   };
 
   /// Returns the common set of qualifiers while removing them from
@@ -295,6 +310,12 @@ public:
     assert(!(mask & ~CVRMask & ~UMask) && "bitmask contains non-CVRU bits");
     Mask |= mask;
   }
+  // Checked C
+  void addCVRUMQualifiers(unsigned mask) {
+    assert(!(mask & ~CVRMask & ~UMask & ~MultipleMask) &&
+          "bit mask contains non-CVRUM bits");
+    Mask |= mask;
+  }
 
   bool hasUnaligned() const { return Mask & UMask; }
   void setUnaligned(bool flag) {
@@ -302,6 +323,13 @@ public:
   }
   void removeUnaligned() { Mask &= ~UMask; }
   void addUnaligned() { Mask |= UMask; }
+
+  // Checked C
+  bool hasMultiple() const { return Mask & MultipleMask; }
+  void setMultiple(bool flag) {
+    Mask = (Mask & ~MultipleMask) | (flag ? MultipleMask : 0);
+  }
+  void addMultiple() { Mask |= CheckedCQual::Multiple; }
 
   bool hasObjCGCAttr() const { return Mask & GCAttrMask; }
   GC getObjCGCAttr() const { return GC((Mask & GCAttrMask) >> GCAttrShift); }
@@ -559,8 +587,15 @@ public:
   }
 
 private:
+  // Obsolete (Beofore adding Checked C specific qualifiers):
   // bits:     |0 1 2|3|4 .. 5|6  ..  8|9   ...   31|
   //           |C R V|U|GCAttr|Lifetime|AddressSpace|
+  //
+  // Updated for Checked C:
+  // bits:     |0 1 2|3|4 .. 5|6  ..  8|9  .. 10|11   ...   31|
+  //           |C R V|U|GCAttr|Lifetime|CheckedC|AddressSpace|
+  // Currently bit 9 is for _multiple. bit 10 is reserved for the qualifer
+  // that indicates a variable/field shared between checked and unchecked code.
   uint32_t Mask = 0;
 
   static const uint32_t UMask = 0x8;
@@ -569,9 +604,12 @@ private:
   static const uint32_t GCAttrShift = 4;
   static const uint32_t LifetimeMask = 0x1C0;
   static const uint32_t LifetimeShift = 6;
+  static const uint32_t CheckedCMask = 0x600;
+  static const uint32_t MultipleMask = 0x200;
+  static const uint32_t MultipleShift = 9;
   static const uint32_t AddressSpaceMask =
-      ~(CVRMask | UMask | GCAttrMask | LifetimeMask);
-  static const uint32_t AddressSpaceShift = 9;
+      ~(CVRMask | UMask | GCAttrMask | LifetimeMask | CheckedCMask);
+  static const uint32_t AddressSpaceShift = 11;
 };
 
 /// A std::pair-like structure for storing a qualified type split
@@ -735,6 +773,9 @@ public:
 
   /// Determine whether this type is volatile-qualified.
   bool isVolatileQualified() const;
+
+  /// Checked C: Determine whether this type is _multiple-qualified.
+  bool isMultipleQualified() const;
 
   /// Determine whether this particular QualType instance has any
   /// qualifiers, without looking through any typedefs that might add
@@ -6420,6 +6461,11 @@ inline bool QualType::isRestrictQualified() const {
 inline bool QualType::isVolatileQualified() const {
   return isLocalVolatileQualified() ||
          getCommonPtr()->CanonicalType.isLocalVolatileQualified();
+}
+
+/// Checked C
+inline bool QualType::isMultipleQualified() const {
+  return getCommonPtr()->CanonicalType.getLocalQualifiers().hasMultiple();
 }
 
 inline bool QualType::hasQualifiers() const {

@@ -35,6 +35,7 @@
 #include "llvm/IR/GlobalVariable.h"
 #include "llvm/IR/Intrinsics.h"
 #include "llvm/IR/Module.h"
+#include "llvm/IR/Operator.h"
 #include <cstdarg>
 
 using namespace clang;
@@ -397,6 +398,9 @@ public:
     return Builder.CreateIsNotNull(V, "tobool");
   }
 
+  // Checked C: Emit an mmptr to an _multiple stack/global object.
+  Value *EmitMMSafePtrToMultipleMem(Value *result);
+
   //===--------------------------------------------------------------------===//
   //                            Visitor Methods
   //===--------------------------------------------------------------------===//
@@ -614,6 +618,12 @@ public:
       result = cast<llvm::Instruction>(result)->getOperand(0);
     }
 
+    // Emit an MMPtr to an _multiple stack or global object.
+    if (cast<PointerType>(E->getType().getTypePtr())->getPointeeType().
+        isMultipleQualified()) {
+      return EmitMMSafePtrToMultipleMem(result);
+    }
+
     if (isa<GetElementPtrInst>(result)) {
       // This Expr gets the address of an object in a struct or an array.
       Expr *e = E->getSubExpr();
@@ -718,11 +728,10 @@ public:
 
             const llvm::StructLayout *SL =
               DL.getStructLayout(cast<StructType>(GEPPtrElemType));
-            uint64_t IdxOfStruct =
-              cast<ConstantInt>(Index)->getZExtValue();
-            ConstantInt *offsetOfStruct =
+            uint64_t IdxOfStruct = cast<ConstantInt>(Index)->getZExtValue();
+            ConstantInt *OffsetOfStruct =
               Builder.getInt64(SL->getElementOffset(IdxOfStruct));
-            Offset = Builder.CreateAdd(Offset, offsetOfStruct);
+            Offset = Builder.CreateAdd(Offset, OffsetOfStruct);
           } else if (isa<llvm::ArrayType>(GEPPtrElemType)) {
             // Compute the offset in the array.
             llvm::ArrayType *ArrType = cast<llvm::ArrayType>(GEPPtrElemType);
@@ -1771,6 +1780,124 @@ Value *ScalarExprEmitter::EmitComplexToScalarConversion(
 
 Value *ScalarExprEmitter::EmitNullValue(QualType Ty) {
   return CGF.EmitFromMemory(CGF.CGM.EmitNullConstant(Ty), Ty);
+}
+
+/// A helper function to compute the offset of a struct field.
+static inline Value * GetStructElemOffset(llvm::StructType *ST, Value *Index,
+                                          const llvm::DataLayout &DL) {
+  const llvm::StructLayout *SL = DL.getStructLayout(ST);
+  uint64_t IdxOfStruct = cast<ConstantInt>(Index)->getZExtValue();
+  return ConstantInt::get(llvm::Type::getInt64Ty(ST->getContext()),
+                          (SL->getElementOffset(IdxOfStruct)));
+}
+
+/// A helper function to compute the offset of an item of an array.
+static inline Value * GetArrayElemOffset(llvm::ArrayType *AT, Value *Index,
+                                         const llvm::DataLayout &DL) {
+  uint64_t offset = cast<ConstantInt>(Index)->getZExtValue() *
+                    DL.getTypeAllocSize(AT->getElementType());
+  return ConstantInt::get(llvm::Type::getInt64Ty(AT->getContext()), offset);
+}
+
+/// Checked C
+/// Emit an MMSafe pointer to an _multiple local or global object.
+/// An _multiple object is an object to which pointers may also point to
+/// a heap object. The motivation of having this special qualifier is to
+/// let the compiler generate an mmsafe pointer to such objects so that
+/// the mmsafe ptr can be propogated to other mmsafe pointers that may also
+/// point to the heap.
+Value *ScalarExprEmitter::EmitMMSafePtrToMultipleMem(Value *result) {
+  using GlobalVariable = llvm::GlobalVariable;
+  using StructType = llvm::StructType;
+  using ArrayType = llvm::ArrayType;
+  using PointerType = llvm::PointerType;
+  using GEPOperator = llvm::GEPOperator;
+
+  bool isStackObj = true;
+  Value *Offset = Builder.getInt64(0);
+  if (isa<GlobalVariable>(result)) {
+    // Get the start address of an _multiple stack object. This should
+    // be from code like "&global_var".
+    isStackObj = false;
+  } else if (!isa<llvm::AllocaInst>(result)) {
+    // Get the address of an inner item of a struct or array.
+    GEPOperator *GEPO = dyn_cast<GEPOperator>(result);
+    assert(GEPO && "Unknown result in EmitMMSafePtrToMultipleMem");
+
+    // Start to compute the offset of the inner object.
+    const llvm::DataLayout &DL = CGF.CGM.getDataLayout();
+    Value *GEPPtr= GEPO->getPointerOperand();
+    llvm::Type *GEPPtrElemType =
+        cast<PointerType>(GEPPtr->getType())->getElementType();
+
+    if (isa<GlobalVariable>(GEPPtr)) {
+      // Processing a global _multiple variable.
+      isStackObj = false;
+      // Unlike getting the addressof an inner field of a local struct/array,
+      // for which the GEP usually has only 2 indices, for global struct/array,
+      // there could be artitrary number of indices. For example, GNArr is a
+      // global array of 10 struct Node which contains an array of struct Data
+      // which contains an int, "&GNArr[5].darr[3].i" would be something like
+      // "i32* getelementptr inbounds ([10 x %struct.Node], [10 x %struct.Node]* @GNArr, i64 0, i64 5, i32 11, i64 3, i32 1)"
+      // We need a loop to compute the offset step by step.
+      assert(cast<ConstantInt>(GEPO->getOperand(1))->isZero() &&
+             "The first index is not 0");
+      for (unsigned i = 2; i <= GEPO->getNumIndices(); i++) {
+        Value *Index = GEPO->getOperand(i);
+        if (StructType *ST = dyn_cast<StructType>(GEPPtrElemType)) {
+          // Compute the offset in a struct.
+          Offset = Builder.CreateAdd(Offset, GetStructElemOffset(ST, Index, DL));
+          GEPPtrElemType = ST->getTypeAtIndex(Index);
+        } else if (ArrayType *AT = dyn_cast<ArrayType>(GEPPtrElemType)) {
+          // Compute the offset in an array
+          Offset = Builder.CreateAdd(Offset, GetArrayElemOffset(AT, Index, DL));
+          GEPPtrElemType = AT->getElementType();
+        } else {
+          assert(0 && "Unknown GEP Element Type");
+        }
+      }
+    } else {
+      // Processing a local _multiple variable.
+      while (true) {
+        // Until now all the GEP that reach here have 2 indices.
+        assert(GEPO->getNumIndices() == 2 && "GEP does not have 2 indices");
+        Value *Index = GEPO->getOperand(2);
+        if (StructType *ST = dyn_cast<StructType>(GEPPtrElemType)) {
+          // If the first index is not 0, add sizeof(struct) * firstIdx to Offset.
+          assert(cast<ConstantInt>(GEPO->getOperand(1))->isZero() &&
+                 "The first index is not 0");
+          Offset = Builder.CreateAdd(Offset, GetStructElemOffset(ST, Index, DL));
+        } else if (ArrayType *AT = dyn_cast<ArrayType>(GEPPtrElemType)) {
+          // Compute the offset in the array
+          Offset = Builder.CreateAdd(Offset, GetArrayElemOffset(AT, Index, DL));
+        } else {
+          assert(0 && "Unknown GEP Element Type");
+        }
+
+        if (isa<llvm::AllocaInst>(GEPPtr)) {
+          break;
+        } else {
+          GEPO = cast<GEPOperator>(GEPPtr);
+          GEPPtr = GEPO->getPointerOperand();
+          GEPPtrElemType = cast<PointerType>(GEPPtr->getType())->getElementType();
+        }
+      }
+    }
+  }
+
+  // Create the KeyOffset metadata.
+  Value *KeyOffset = isStackObj ? Builder.getInt64(1) : Builder.getInt64(2);
+  KeyOffset = Builder.CreateShl(KeyOffset, 32);
+  KeyOffset = Builder.CreateAdd(KeyOffset, Offset);
+  // Create an MMSafe pointer.
+  llvm::StructType *MMPtrTy = llvm::StructType::get(result->getType(),
+                                                    Builder.getInt64Ty());
+  MMPtrTy->isMMPtr = true;
+  Value *insertPtr = Builder.CreateInsertValue(llvm::UndefValue::get(MMPtrTy),
+                                               result, 0);
+  result = Builder.CreateInsertValue(insertPtr, KeyOffset, 1);
+
+  return result;
 }
 
 /// Emit a sanitization check for the given "binary" operation (which
