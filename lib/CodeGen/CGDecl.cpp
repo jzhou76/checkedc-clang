@@ -1410,6 +1410,10 @@ CodeGenFunction::EmitAutoVarAlloca(const VarDecl &D) {
       // builds.
       address = CreateTempAlloca(allocaTy, allocaAlignment, D.getName(),
                                  /*ArraySize=*/nullptr, &AllocaAddr);
+      // Checked C: set _multiple for a stack variable.
+      // Are there any other places we need set the _multiple for an AllocaInst?
+      cast<llvm::AllocaInst>(address.getPointer())->setMultipleQualified(
+          Ty.isMultipleQualified());
 
       // Don't emit lifetime markers for MSVC catch parameters. The lifetime of
       // the catch parameter starts in the catchpad instruction, and we can't

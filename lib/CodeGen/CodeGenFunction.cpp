@@ -38,6 +38,7 @@
 #include "llvm/IR/MDBuilder.h"
 #include "llvm/IR/Operator.h"
 #include "llvm/Transforms/Utils/PromoteMemToReg.h"
+#include "llvm/Transforms/Utils/BasicBlockUtils.h"
 using namespace clang;
 using namespace CodeGen;
 
@@ -1409,6 +1410,44 @@ void CodeGenFunction::GenerateCode(GlobalDecl GD, llvm::Function *Fn,
   // a quick pass now to see if we can.
   if (!CurFn->doesNotThrow())
     TryMarkNoThrow(CurFn);
+
+  // Checked C: process _multiple stack variables.
+  AllocateLockForMultipleStackVar(Fn);
+}
+
+//
+// Checked C
+// This function replaces each _multiple stack variable with a struct that
+// contains a lock and the orignal stack variable. The lock for all stack
+// variables is 1. It also replaces all the uses of the original Alloca with
+// a GEP to the stack variable in the struct.
+void CodeGenFunction::AllocateLockForMultipleStackVar(llvm::Function *Fn) {
+  using AllocaInst = llvm::AllocaInst;
+  // Collect all _multiple stack variables. We only need to iterate over
+  // the front BB because all AllocaInst are in in it.
+  std::vector<AllocaInst *> MultipleVars;
+  for (llvm::Instruction &I : Fn->front()) {
+    if (AllocaInst *Alloca = dyn_cast<AllocaInst>(&I)) {
+      if (Alloca->isMultipleQualified()) {
+        MultipleVars.push_back(Alloca);
+      }
+    }
+  }
+
+  // Process each _multiple AllocaInst.
+  for (AllocaInst *Alloca : MultipleVars) {
+    Builder.SetInsertPoint(Alloca);
+    llvm::StructType *ST = llvm::StructType::get(Builder.getInt64Ty(),
+                                                 Alloca->getAllocatedType());
+    AllocaInst *NewAlloca = Builder.CreateAlloca(ST);
+    llvm::Value *VarPtr = Builder.CreateStructGEP(NewAlloca, 1);
+    // Initialize the lock to 1.
+    Builder.CGBuilderBaseTy::CreateStore(Builder.getInt64(1),
+        Builder.CreateStructGEP(NewAlloca, 0));
+    // Replace the uses of Alloca with the GEP to the new Alloca.
+    llvm::BasicBlock::iterator BI(Alloca);
+    ReplaceInstWithValue(Fn->front().getInstList(), BI, VarPtr);
+  }
 }
 
 /// ContainsLabel - Return true if the statement contains a label in it.  If
