@@ -364,6 +364,8 @@ CODEGENOPT(BranchTargetEnforcement, 1, 0)
 /// Whether to emit unused static constants.
 CODEGENOPT(KeepStaticConsts, 1, 0)
 
+/// Checked C: Create a lock for _multiple stack & global objects.
+CODEGENOPT(CheckedCAddLockToMultiple, 1, 1)
 /// Checked C: Resolve the _MMPtr and _MM_array_ptr type mismatch issue.
 CODEGENOPT(CheckedCHarmonizeType, 1, 1)
 

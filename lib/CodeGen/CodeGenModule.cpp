@@ -3081,6 +3081,8 @@ CodeGenModule::GetOrCreateLLVMGlobal(StringRef MangledName,
       getModule(), Ty->getElementType(), false,
       llvm::GlobalValue::ExternalLinkage, nullptr, MangledName, nullptr,
       llvm::GlobalVariable::NotThreadLocal, TargetAddrSpace);
+  // Checked C: set _multiple if it is.
+  GV->setMultipleQualified(D->getType().isMultipleQualified());
 
   // If we already created a global with the same mangled name (but different
   // type) before, take its name and remove it from its parent.
