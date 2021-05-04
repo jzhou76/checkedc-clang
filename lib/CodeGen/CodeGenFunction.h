@@ -1808,9 +1808,6 @@ public:
   void GenerateCode(GlobalDecl GD, llvm::Function *Fn,
                     const CGFunctionInfo &FnInfo);
 
-  // Checked C: process _multiple stack variables.
-  void AllocateLockForMultipleStackVar(llvm::Function *Fn);
-
   /// Annotate the function with an attribute that disables TSan checking at
   /// runtime.
   void markAsIgnoreThreadCheckingAtRuntime(llvm::Function *Fn);
