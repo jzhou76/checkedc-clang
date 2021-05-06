@@ -399,7 +399,7 @@ public:
   }
 
   // Checked C: Emit an mmptr to an _multiple stack/global object.
-  Value *EmitMMSafePtrToMultipleMem(Value *result);
+  Value *EmitMMSafePtrToMultipleMem(Value *Val, bool isAddrOf=false);
 
   //===--------------------------------------------------------------------===//
   //                            Visitor Methods
@@ -621,7 +621,7 @@ public:
     // Emit an MMPtr to an _multiple stack or global object.
     if (cast<PointerType>(E->getType().getTypePtr())->getPointeeType().
         isMultipleQualified()) {
-      return EmitMMSafePtrToMultipleMem(result);
+      return EmitMMSafePtrToMultipleMem(result, true);
     }
 
     if (isa<GetElementPtrInst>(result)) {
@@ -1799,30 +1799,62 @@ static inline Value * GetArrayElemOffset(llvm::ArrayType *AT, Value *Index,
   return ConstantInt::get(llvm::Type::getInt64Ty(AT->getContext()), offset);
 }
 
-/// Checked C
-/// Emit an MMSafe pointer to an _multiple local or global object.
-/// An _multiple object is an object to which pointers may also point to
-/// a heap object. The motivation of having this special qualifier is to
-/// let the compiler generate an mmsafe pointer to such objects so that
-/// the mmsafe ptr can be propogated to other mmsafe pointers that may also
-/// point to the heap.
-Value *ScalarExprEmitter::EmitMMSafePtrToMultipleMem(Value *result) {
+//
+// Checked C
+// Emit an MMSafe pointer to an _multiple local or global object.
+// An _multiple object is an object to which pointers may also point to
+// a heap object. The motivation of having this special qualifier is to
+// let the compiler generate an mmsafe pointer to such objects so that
+// the mmsafe ptr can be propogated to other mmsafe pointers that may also
+// point to the heap.
+//
+// Inputs:
+// @Val - an AllocaInst, GlobalVariable, or a GEP instruction/constant that
+//        represents a point to a local or global object.
+// @isAddrOf - if @Val is the result of an address-of expression; if not, it is
+//             from an arithmetic expression, including directly using the name
+//             of an array, which is implicitly adding '0'.
+//
+// Return: An MMSafePtr containing @Val and a key (and other metada if needed).
+//
+Value *ScalarExprEmitter::EmitMMSafePtrToMultipleMem(Value *Val, bool isAddrOf) {
   using GlobalVariable = llvm::GlobalVariable;
   using StructType = llvm::StructType;
   using ArrayType = llvm::ArrayType;
   using PointerType = llvm::PointerType;
   using GEPOperator = llvm::GEPOperator;
+  llvm::Type *Int64Ty = Builder.getInt64Ty();
 
+  if (!isAddrOf) {
+    // The Val is from an arithmetic expression of an array.
+    llvm::Type *Int64PtrTy = Int64Ty->getPointerTo();
+    GEPOperator *GEP = dyn_cast<GEPOperator>(Val);
+    assert(GEP && "Not a GEP");
+    Value *GEPPtr = GEP->getPointerOperand();
+    Value *Key = isa<GlobalVariable>(GEPPtr) ? Builder.getInt64(2)
+                                             : Builder.getInt64(1);
+    Value *PtrToInt = Builder.CreatePtrToInt(GEPPtr, Int64Ty);
+    Value *LockAddrInt = Builder.CreateSub(PtrToInt, Builder.getInt64(8));
+    Value *LockAddr = Builder.CreateIntToPtr(LockAddrInt, Int64PtrTy);
+    StructType *ST = StructType::get(Val->getType(), Int64Ty, Int64PtrTy);
+    ST->isMMArrayPtr = true;
+    // Create an mm_array_ptr.
+    Val = Builder.CreateInsertValue(llvm::UndefValue::get(ST), Val, 0);
+    Val = Builder.CreateInsertValue(Val, Key, 1);
+    return Builder.CreateInsertValue(Val, LockAddr, 2);
+  }
+
+  // The rest of this function processes an address-of expression.
   bool isStackObj = true;
   Value *Offset = Builder.getInt64(0);
-  if (isa<GlobalVariable>(result)) {
+  if (isa<GlobalVariable>(Val)) {
     // Get the start address of an _multiple stack object. This should
     // be from code like "&global_var".
     isStackObj = false;
-  } else if (!isa<llvm::AllocaInst>(result)) {
+  } else if (!isa<llvm::AllocaInst>(Val)) {
     // Get the address of an inner item of a struct or array.
-    GEPOperator *GEPO = dyn_cast<GEPOperator>(result);
-    assert(GEPO && "Unknown result in EmitMMSafePtrToMultipleMem");
+    GEPOperator *GEPO = dyn_cast<GEPOperator>(Val);
+    assert(GEPO && "Unknown Val in EmitMMSafePtrToMultipleMem");
 
     // Start to compute the offset of the inner object.
     const llvm::DataLayout &DL = CGF.CGM.getDataLayout();
@@ -1889,15 +1921,12 @@ Value *ScalarExprEmitter::EmitMMSafePtrToMultipleMem(Value *result) {
   Value *KeyOffset = isStackObj ? Builder.getInt64(1) : Builder.getInt64(2);
   KeyOffset = Builder.CreateShl(KeyOffset, 32);
   KeyOffset = Builder.CreateAdd(KeyOffset, Offset);
-  // Create an MMSafe pointer.
-  llvm::StructType *MMPtrTy = llvm::StructType::get(result->getType(),
-                                                    Builder.getInt64Ty());
+  // Create an MMPtr.
+  llvm::StructType *MMPtrTy = llvm::StructType::get(Val->getType(), Int64Ty);
   MMPtrTy->isMMPtr = true;
   Value *insertPtr = Builder.CreateInsertValue(llvm::UndefValue::get(MMPtrTy),
-                                               result, 0);
-  result = Builder.CreateInsertValue(insertPtr, KeyOffset, 1);
-
-  return result;
+                                               Val, 0);
+  return Builder.CreateInsertValue(insertPtr, KeyOffset, 1);
 }
 
 /// Emit a sanitization check for the given "binary" operation (which
@@ -2407,6 +2436,13 @@ Value *ScalarExprEmitter::VisitCastExpr(CastExpr *CE) {
         // Earlier during compiling we should check to ensure the cast is safe.
         return Builder.CreateMMSafePtrCast(Src, DstTy, Src->getName() + "_cast");
       } else {
+        QualType SrcQualTy = E->getType();
+        if (DstTy->isMMArrayPointerTy() && SrcQualTy->isPointerType() &&
+            SrcQualTy->getPointeeType().isMultipleQualified()) {
+          // Create an MMArrayPtr from an arith-expr of an _multiple object.
+          return EmitMMSafePtrToMultipleMem(Src);
+        }
+
         assert(0 && "Casting improper type to MMSafe pointer.");
       }
     }

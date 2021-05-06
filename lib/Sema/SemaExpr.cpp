@@ -8110,6 +8110,11 @@ checkPointerTypesForAssignment(Sema &S, QualType LHSType, ExprResult &RHS) {
       }
     }
 
+    // Checke if it is assigning an _multiple array to an mm_array_ptr.
+    if (lhkind == CheckedPointerKind::MMArray && rhq.hasMultiple()) {
+      return Sema::Compatible;
+    }
+
     return Sema::Incompatible;
   }
 
@@ -8368,8 +8373,11 @@ Sema::CheckAssignmentConstraints(QualType LHSType, ExprResult &RHS,
   RHSType = Context.getCanonicalType(RHSType).getUnqualifiedType();
 
   // Checked C
-  // Disallow assigning mmsafe pointers generated from an '&' expression
+  // 1. Disallow assigning mmsafe pointers generated from an '&' expression
   // to a raw pointer.
+  //
+  // FIXME? Should we allow or disallow 2.?
+  // 2. Disallow assigning the address of an _multiple object to a raw C pointer.
   //
   // FIXME: Currently the RHSType of the result of an addres-of expression
   // is always a raw pointer. For example, The type of "&p->i" is "int *" if
@@ -8379,12 +8387,19 @@ Sema::CheckAssignmentConstraints(QualType LHSType, ExprResult &RHS,
   //    "initializing 'int *' with an expression of incompatible type 'int *'".
   // To fix this issue, we need set the type of the RHS correctly at a much
   // earlier stage.
+  // Plus, we would get a similarly confusing error message from assigning the
+  // address of an _multiple object to a raw C pointer.
   if (isa<PointerType>(LHSType.getTypePtr()) &&
       isa<PointerType>(RHSType.getTypePtr())) {
     CheckedPointerKind lhkind = cast<PointerType>(LHSType)->getKind();
     CheckedPointerKind rhkind = cast<PointerType>(RHSType)->getKind();
     if (lhkind == CheckedPointerKind::Unchecked &&
         rhkind == CheckedPointerKind::Unchecked) {
+      if (RHSType->getPointeeType().isMultipleQualified()) {
+        // Again, should we allow or disallow this?
+        return Sema::Incompatible;
+      }
+
       UnaryOperator *UO = dyn_cast<UnaryOperator>(RHS.get());
       if (UO && UO->isAddressOf()) {
         Expr *E = UO->getSubExpr();
