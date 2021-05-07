@@ -1705,6 +1705,41 @@ llvm::Value *CodeGenFunction::EmitFromMemory(llvm::Value *Value, QualType Ty) {
   return Value;
 }
 
+//
+// Checked C
+//
+// This function creates an MMArrayPtr that is set to a ConstantStruct for
+// a string constant. This should come from directly assigning a string constant
+// to an mm_array_ptr in the source code.
+//
+// Inputs:
+// @StrGEP: a GetElementPtrConstantExpr to the first element of a string constant.
+// @Builder: an IR builder from clang::CodeGenFunction.
+//
+// Return:
+//   A ConstantStruct representing an MMSafePtr with @StrGEP as the first field.
+//
+static llvm::Value *
+EmitMMArrayPtrForStrConst(llvm::Value *StrGEP, CGBuilderTy &Builder) {
+  using Constant = llvm::Constant;
+  using StructType = llvm::StructType;
+  using Value = llvm::Value;
+  llvm::Type *Int64Ty = Builder.getInt64Ty();
+  llvm::Type *Int64PtrTy = Int64Ty->getPointerTo();
+
+  // Create an MMArrayPtr constant.
+  StructType *ST = StructType::get(StrGEP->getType(), Int64Ty, Int64PtrTy);
+  Value *LockAddrInt = Builder.CreateSub(Builder.CreatePtrToInt(StrGEP, Int64Ty),
+                                         Builder.getInt64(8));
+  Value *LockAddr = Builder.CreateIntToPtr(LockAddrInt, Int64PtrTy);
+  // The two cast in the constructor should be safe because StrGEP should be an
+  // llvm::GetElementPtrConstantExpr; and LockAddr was constructed by
+  // performing a bit cast and an substraction with a ConstantInt on StrGEP.
+  return llvm::ConstantStruct::get(ST, {cast<Constant>(StrGEP),
+                                        llvm::ConstantInt::get(Int64Ty, 2),
+                                        cast<Constant>(LockAddr)});
+}
+
 void CodeGenFunction::EmitStoreOfScalar(llvm::Value *Value, Address Addr,
                                         bool Volatile, QualType Ty,
                                         LValueBaseInfo BaseInfo,
@@ -1742,14 +1777,31 @@ void CodeGenFunction::EmitStoreOfScalar(llvm::Value *Value, Address Addr,
     return;
   }
 
-  llvm::Type *pointeeTy =
-    cast<llvm::PointerType>(Addr.getPointer()->getType())->getElementType();
-  if (pointeeTy->isMMSafePointerTy() && isa<llvm::ConstantPointerNull>(Value)) {
-    // Checked C
-    // Assign a NULL to an _MM_ptr or _MM_array_ptr.
-    // Create a GEP to get the inner raw pointer and make it an Address.
-    Addr = Builder.CreateStructGEP(Addr, 0, CharUnits::fromQuantity(0),
-                                   Addr.getName() + "_innerPtr");
+  if (Addr.getElementType()->isMMSafePointerTy()) {
+    if (isa<llvm::ConstantPointerNull>(Value)) {
+      // Checked C:  Assign a NULL to an MMSafePtr.
+      // Create a GEP to get the inner raw pointer and make it an Address.
+      Addr = Builder.CreateStructGEP(Addr, 0, CharUnits::fromQuantity(0),
+                                     Addr.getName() + "_innerPtr");
+    } else if (llvm::GEPOperator *GEP = dyn_cast<llvm::GEPOperator>(Value)) {
+      llvm::GlobalVariable *GV =
+        dyn_cast<llvm::GlobalVariable>(GEP->getPointerOperand());
+      if (GV && GV->isConstant() && GEP->getResultElementType()->isIntegerTy(8)
+          && Addr.getElementType()->isMMArrayPointerTy()) {
+        // Checked C: Directly assigning an string constant to an MMArrayPtr.
+        // Since string constants are stored as private globals, we treat them
+        // as _multiple global variables.
+        //
+        // Jie Zhou: The checks in this if statement might be redundant. If
+        // the execution reaches to the outside if condition, it should be
+        // assigning a string constant to an MMArrayPtr because otherwise
+        // there should be type mismatches errors caught by the type checker.
+        // TODO: The type checker should forbid assigning a string constant
+        // to an MMPtr, while it does not enforce it now.
+        GV->setMultipleQualified(true);
+        Value = EmitMMArrayPtrForStrConst(Value, Builder);
+      }
+    }
   }
   llvm::StoreInst *Store = Builder.CreateStore(Value, Addr, Volatile);
   if (isNontemporal) {
