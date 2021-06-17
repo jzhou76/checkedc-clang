@@ -608,14 +608,19 @@ public:
     // If the '&' operator gets the address of an object inside an object
     // pointed by an MMSafe pointer, the result should be assigned to
     // an MMSafe pointer with the same key and the offset of the inner object.
-    // The following code checks if it is this case and if so constructs
+    // The following code checks if it is this case and if so it constructs
     // and returns an MMSafe pointer.
 
-    // Remove bit cast. This is needed when a uinon member is involved, e.g.,
-    // &p->i where p points to a union which has a member i.
+    // When the pointee is a union, e.g., &p->i where p points to a union
+    // which has a member i, we need to first strip off the bitcast to check
+    // if an MMSafe pointer is involved. However, in case there is no
+    // MMSafe pointer detected, we should return the original result; the
+    // bitcasted result would cause the assertion
+    // "(getType() == V->getType() && "All operands to PHI node must be the same type as the PHI node!")"
+    // to fail in IR/Instructions.h
+    Value *originalResult = result;
     if (isa<llvm::BitCastInst>(result)) {
-      // Do we need to put this to a loop just in case there are more than one cast?
-      result = cast<llvm::Instruction>(result)->getOperand(0);
+      result = result->stripPointerCasts();
     }
 
     // Emit an MMPtr to an _multiple stack or global object.
@@ -686,7 +691,7 @@ public:
       }
 
       // Return the result if no MMSafe pointer is found in the access chain.
-      if (!hasMMSafePtrExpr) return result;
+      if (!hasMMSafePtrExpr) return originalResult;
 
       // Start to compute the offset of the inner object.
       const llvm::DataLayout &DL = CGF.CGM.getDataLayout();
@@ -832,8 +837,8 @@ public:
       }
     }
 
-    // For all other cases, return the result.
-    return result;
+    // For all other cases, return the original result.
+    return originalResult;
   }
   Value *VisitUnaryDeref(const UnaryOperator *E) {
     if (E->getType()->isVoidType())
