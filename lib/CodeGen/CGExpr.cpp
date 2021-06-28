@@ -2661,7 +2661,8 @@ LValue CodeGenFunction::EmitDeclRefLValue(const DeclRefExpr *E) {
   llvm_unreachable("Unhandled DeclRefExpr");
 }
 
-LValue CodeGenFunction::EmitUnaryOpLValue(const UnaryOperator *E) {
+LValue CodeGenFunction::EmitUnaryOpLValue(const UnaryOperator *E,
+                                          bool dynamicKeyCheck) {
   // __extension__ doesn't affect lvalue-ness.
   if (E->getOpcode() == UO_Extension)
     return EmitLValue(E->getSubExpr());
@@ -2685,8 +2686,8 @@ LValue CodeGenFunction::EmitUnaryOpLValue(const UnaryOperator *E) {
     EmitDynamicBoundsCheck(Addr, E->getBoundsExpr(), E->getBoundsCheckKind(),
                            nullptr);
 
-    // Checked C: Check for Struct ID matching.
-    EmitDynamicKeyCheck(E->getSubExpr());
+    // Checked C: Insert a dynamic key check for mmsafeptr dereference.
+    if(dynamicKeyCheck) EmitDynamicKeyCheck(E->getSubExpr());
 
     // We should not generate __weak write barrier on indirect reference
     // of a pointer to object; as in void foo (__weak id *param); *param = 0;

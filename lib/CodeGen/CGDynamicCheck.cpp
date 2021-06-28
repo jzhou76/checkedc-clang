@@ -528,12 +528,19 @@ void CodeGenFunction::EmitDynamicKeyCheck(const Expr *E) {
         MMSafePtrLV = EmitArraySubscriptExpr(cast<ArraySubscriptExpr>(E), false,
                                              /*dynamicKeyCheck=*/false);
         break;
-      case Expr::UnaryOperatorClass:
-        // Handle increment/decrement operations, e.g., *p++/-- and *++/--p.
-        assert(cast<UnaryOperator>(E)->isIncrementDecrementOp() &&
-               "Unsupported Unary Operator");
-        E = cast<UnaryOperator>(E)->getSubExpr();
+      case Expr::UnaryOperatorClass: {
+        const UnaryOperator *UO = cast<UnaryOperator>(E);
+        if (UO->isIncrementDecrementOp()) {
+          // Handle increment/decrement operations, e.g., *p++/-- and *++/--p.
+          E = cast<UnaryOperator>(E)->getSubExpr();
+        } else if (UO->getOpcode() == UnaryOperatorKind::UO_Deref) {
+          // Handle multiple-level pointer dereferences, e.g., **p or ***p.
+          MMSafePtrLV = EmitUnaryOpLValue(UO, false);
+        } else {
+          assert(0 && "Unsupported Unary Operator");
+        }
         break;
+      }
       case Expr::BinaryOperatorClass: {
         // Hanlde expression like *(p +/- num).
         const BinaryOperator *BO = cast<BinaryOperator>(E);

@@ -3559,7 +3559,7 @@ public:
   LValue EmitStringLiteralLValue(const StringLiteral *E);
   LValue EmitObjCEncodeExprLValue(const ObjCEncodeExpr *E);
   LValue EmitPredefinedLValue(const PredefinedExpr *E);
-  LValue EmitUnaryOpLValue(const UnaryOperator *E);
+  LValue EmitUnaryOpLValue(const UnaryOperator *E, bool dynamicKeyCheck=true);
   LValue EmitArraySubscriptExpr(const ArraySubscriptExpr *E,
                                 bool Accessed = false,
                                 bool dynamicKeyCheck = true);
