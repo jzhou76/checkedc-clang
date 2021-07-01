@@ -2528,8 +2528,8 @@ Value *ScalarExprEmitter::VisitCastExpr(CastExpr *CE) {
       (void) Visit(E);
     llvm::Type *llvmDestTy = ConvertType(DestTy);
     if (DestTy->isCheckedPointerMMSafeType()) {
-      // Checked C: assign an NULL to a _MM_ptr or _MM_array_ptr.
-      return CGF.CGM.getNullPointer(llvmDestTy->getMMSafePtrInnerPtrTy(), DestTy);
+      // Checked C: assigning a NULL to an MMSafePtr.
+      return CGF.CGM.EmitNullMMSafePtr(DestTy);
     } else {
       return CGF.CGM.getNullPointer(cast<llvm::PointerType>(llvmDestTy), DestTy);
     }

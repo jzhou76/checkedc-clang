@@ -1080,6 +1080,13 @@ void CodeGenFunction::EmitReturnStmt(const ReturnStmt &S) {
       llvm::Value *ConcreteRV = EmitScalarExpr(RV);
       if (isa<llvm::ConstantPointerNull>(ConcreteRV) &&
           ReturnValue.getElementType()->isMMSafePointerTy()) {
+        // Updated on 7/1/2021:
+        // Do we need this condition now that the CK_NullToPointer case
+        // in ScalarExprEmitter::VisitCastExpr() directly returns a full
+        // checked pointer?
+        // The next assertion is not triggered by our current test programs.
+        assert(0 && "Assigning a NULL pointer to a checked pointer");
+
         // Checked C
         // Directly return a NULL when the formal return type is of
         // MMSafe pointer. Here it extracts the inner raw pointer of the
