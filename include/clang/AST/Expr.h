@@ -874,6 +874,9 @@ public:
     return T->getStmtClass() >= firstExprConstant &&
            T->getStmtClass() <= lastExprConstant;
   }
+
+  // Checked C: Check if this is an address-of expression.
+  bool isAddressOf() const;
 };
 
 //===----------------------------------------------------------------------===//

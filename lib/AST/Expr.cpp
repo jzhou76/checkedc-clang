@@ -3786,6 +3786,11 @@ bool Expr::refersToGlobalRegisterVar() const {
   return false;
 }
 
+/// Checked C: Check if this is an Address-Of expression.
+bool Expr::isAddressOf() const {
+  return isa<UnaryOperator>(this) && cast<UnaryOperator>(this)->isAddressOf();
+}
+
 /// isArrow - Return true if the base expression is a pointer to vector,
 /// return false if the base expression is a vector.
 bool ExtVectorElementExpr::isArrow() const {

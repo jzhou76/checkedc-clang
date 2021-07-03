@@ -7938,6 +7938,59 @@ ExprResult Sema::ActOnConditionalOp(SourceLocation QuestionLoc,
       ColonLoc, result, VK, OK);
 }
 
+//
+// Checked C
+// This is a helper function for CheckAssignmentConstraints() and
+// checkPointerTypesForAssignment(). It parses an address-of expression
+// to see if it returns the address of something pointed by an mmsafe pointer.
+//
+// @arg UOExpr - An address-of expression.
+//
+static bool addrOfExprRetMMSafePtr(Expr *UOExpr) {
+  assert(UOExpr->isAddressOf() && "Not an Address-Of Expression ");
+
+  Expr *E = cast<UnaryOperator>(UOExpr)->getSubExpr();
+  unsigned level = 0;   // Iteration level.
+  while (true) {
+    // Strip off casts and parentheses.
+    while (isa<CastExpr>(E) || isa<ParenExpr>(E)) {
+      E = isa<CastExpr>(E) ? cast<CastExpr>(E)->getSubExpr() :
+        cast<ParenExpr>(E)->getSubExpr();
+    }
+
+    QualType EType = E->getType();
+    if (level != 0 && EType->isPointerType()) {
+      // If level == 0 and E is pointer type, it means getting the address
+      // of a pointer, but not getting something pointed by an mmsafe ptr.
+      //
+      // The false condition is getting the address of an object pointed
+      // by a raw pointer.
+      return EType->isCheckedPointerMMSafeType() ? true : false;
+    }
+
+    switch(E->getStmtClass()) {
+      case Expr::MemberExprClass:
+        E = cast<MemberExpr>(E)->getBase();
+        break;
+      case Expr::ArraySubscriptExprClass:
+        E = cast<ArraySubscriptExpr>(E)->getBase();
+        break;
+      case Expr::UnaryOperatorClass:
+        E = cast<UnaryOperator>(E)->getSubExpr();
+        break;
+      case Expr::DeclRefExprClass:
+        // Reached the top (leftmost) of the Expr.
+        // Getting the address of an _multiple stack/global object should
+        // return an mmsafe pointer.
+        return EType.isMultipleQualified() ? true : false;
+      default:
+        assert(0 && "Unknown Expr");
+        break;
+    }
+    level++;
+  }
+}
+
 // checkPointerTypesForAssignment - This is a very tricky routine (despite
 // being closely modeled after the C99 spec:-). The odd characteristic of this
 // routine is it effectively iqnores the qualifiers on the top level pointee.
@@ -8043,72 +8096,43 @@ checkPointerTypesForAssignment(Sema &S, QualType LHSType, ExprResult &RHS) {
   if (rhkind == CheckedPointerKind::Unchecked &&
       (lhkind == CheckedPointerKind::MMPtr ||
        lhkind == CheckedPointerKind::MMArray)) {
-    UnaryOperator *UO = dyn_cast<UnaryOperator>(RHS.get());
-    if (UO && UO->isAddressOf()) {
-      Expr *E = UO->getSubExpr();
 
-#if 0
-      // Do we want to check if the type of the pointee of the LHS matches the
-      // type of the memory object whose address is taken? Disallowing it
-      // may break some OOP style C code.
-      if (E->getType()->getUnqualifiedDesugaredType() !=
-          lhptee->getUnqualifiedDesugaredType()) {
-        return Sema::Incompatible;
-      }
-#endif
-
-      // Traverse the RHS from right to left to see if the '&' operator is
-      // applied on an inner memory object of an object pointed by an MMSafePtr.
-      unsigned level = 0;   // Iteration level.
-      while (true) {
-        // Strip off cast and parentheses
-        while (isa<CastExpr>(E) || isa<ParenExpr>(E)) {
-          E = isa<CastExpr>(E) ? cast<CastExpr>(E)->getSubExpr() :
-                                 cast<ParenExpr>(E)->getSubExpr();
-        }
-
-        QualType EType = E->getType();
-        if (EType->isCheckedPointerMMSafeType() && level != 0) {
-          // level == 0 means getting the address of an mmsafe ptr, but not
-          // getting something pointed by an mmsafe ptr.
+    // Check if the RHS is a ternary expression (c? a : b) and if any
+    // any of its results returns an mmsafe pointer.
+    Expr *RHSExpr = RHS.get();
+    if (RHSExpr->isAddressOf()) {
+      // Check if the RHS is an addr-of expression and if it returns
+      // an mmsafe pointer.
+      //
+      // If UO returns an mmsafe ptr, does it mean this will definitely
+      // be a compatible case?
+      return addrOfExprRetMMSafePtr(RHSExpr) ?  Sema::Compatible :
+                                                Sema::Incompatible;
+    } else if (ConditionalOperator *CO = dyn_cast<ConditionalOperator>(RHSExpr)) {
+      // If the RHS is a ternary expression (c ? a : b), then both the results
+      // should either be a NULL or an addr-of expr that returns an mmsafe ptr.
+        Expr *TrueExpr = CO->getTrueExpr(), *FalseExpr = CO->getFalseExpr();
+        Expr::NullPointerConstantValueDependence NPCVD =
+          Expr::NPC_NeverValueDependent;
+        if (((TrueExpr->isAddressOf() && addrOfExprRetMMSafePtr(TrueExpr)) ||
+              TrueExpr->isNullPointerConstant(S.Context, NPCVD)) &&
+            ((FalseExpr->isAddressOf() && addrOfExprRetMMSafePtr(FalseExpr)) ||
+             FalseExpr->isNullPointerConstant(S.Context, NPCVD))) {
           return Sema::Compatible;
-        } else if (EType->isPointerType() && level != 0) {
-          // In case the '&' gets the address of an object pointed by a
-          // raw C pointer, Incompatible should be returned because it
-          // generates a raw pointer.
-          //
-          // The reason we need check the level of iteration is that we need
-          // differentiate the two cases in which EType is a PointerType:
-          // getting the address of a pointer field of a struct and
-          // getting the address of something pointed by a raw pointer that
-          // is a field of a struct. The former is allowed but the latter
-          // should be forbidden here because it generates a raw pointer.
-          // We use the depth of the parsing to distinguish the two cases.
+        } else {
           return Sema::Incompatible;
         }
-
-        switch(E->getStmtClass()) {
-          case Expr::MemberExprClass:
-            E = cast<MemberExpr>(E)->getBase();
-            break;
-          case Expr::ArraySubscriptExprClass:
-            E = cast<ArraySubscriptExpr>(E)->getBase();
-            break;
-          case Expr::UnaryOperatorClass:
-            E = cast<UnaryOperator>(E)->getSubExpr();
-            break;
-          case Expr::DeclRefExprClass:
-            // Reached the top (leftmost) of the Expr.
-            // We allow getting the address of an _multiple stack/global object.
-            if (EType.isMultipleQualified()) return Sema::Compatible;
-            return Sema::Incompatible;
-          default:
-            assert(0 && "Unknown Expr");
-            break;
-        }
-        level++;
-      }
     }
+
+#if 0
+    // Do we want to check if the type of the pointee of the LHS matches the
+    // type of the memory object whose address is taken? Disallowing it
+    // may break some OOP style C code.
+    if (E->getType()->getUnqualifiedDesugaredType() !=
+        lhptee->getUnqualifiedDesugaredType()) {
+      return Sema::Incompatible;
+    }
+#endif
 
     // Checke if it is assigning an _multiple array to an mm_array_ptr.
     if (lhkind == CheckedPointerKind::MMArray && rhq.hasMultiple()) {
@@ -8393,6 +8417,7 @@ Sema::CheckAssignmentConstraints(QualType LHSType, ExprResult &RHS,
       isa<PointerType>(RHSType.getTypePtr())) {
     CheckedPointerKind lhkind = cast<PointerType>(LHSType)->getKind();
     CheckedPointerKind rhkind = cast<PointerType>(RHSType)->getKind();
+
     if (lhkind == CheckedPointerKind::Unchecked &&
         rhkind == CheckedPointerKind::Unchecked) {
       if (RHSType->getPointeeType().isMultipleQualified()) {
@@ -8400,49 +8425,19 @@ Sema::CheckAssignmentConstraints(QualType LHSType, ExprResult &RHS,
         return Sema::Incompatible;
       }
 
-      UnaryOperator *UO = dyn_cast<UnaryOperator>(RHS.get());
-      if (UO && UO->isAddressOf()) {
-        Expr *E = UO->getSubExpr();
-
-        // Traverse the RHS from right to left to see if the '&' operator is
-        // applied on an inner memory object of an object pointed by an MMSafePtr.
-        unsigned level = 0;   // Iteration level.
-        bool reachedTop = false;
-        while (true && !reachedTop) {
-          // Strip off cast and parentheses
-          while (isa<CastExpr>(E) || isa<ParenExpr>(E)) {
-            E = isa<CastExpr>(E) ? cast<CastExpr>(E)->getSubExpr() :
-              cast<ParenExpr>(E)->getSubExpr();
-          }
-
-          QualType EType = E->getType();
-          if (level != 0 && EType->isCheckedPointerMMSafeType()) {
+      Expr *RHSExpr = RHS.get();
+      if (RHSExpr->isAddressOf() && addrOfExprRetMMSafePtr(RHSExpr)) {
+        // Check if the RHS is an addr-of expression that returns
+        // an mmsafe pointer.
+          return Sema::Incompatible;
+      } else if (ConditionalOperator *CO =
+                 dyn_cast<ConditionalOperator>(RHSExpr)) {
+        // If the RHS is a ternary expression (c ? a : b), then neither of
+        // the results is allowed to return an mmsafe ptr.
+        Expr *TrueExpr = CO->getTrueExpr(), *FalseExpr = CO->getFalseExpr();
+        if ((TrueExpr->isAddressOf() && addrOfExprRetMMSafePtr(TrueExpr)) ||
+            (FalseExpr->isAddressOf() && addrOfExprRetMMSafePtr(FalseExpr))) {
             return Sema::Incompatible;
-          } else if (EType->isPointerType() && level != 0) {
-            // The case of getting the address of something pointed by a raw pointer.
-            break;
-          }
-
-          switch(E->getStmtClass()) {
-            case Expr::MemberExprClass:
-              E = cast<MemberExpr>(E)->getBase();
-              break;
-            case Expr::ArraySubscriptExprClass:
-              E = cast<ArraySubscriptExpr>(E)->getBase();
-              break;
-            case Expr::UnaryOperatorClass:
-              E = cast<UnaryOperator>(E)->getSubExpr();
-              break;
-            case Expr::DeclRefExprClass:
-              // Reached the top of the Expr.
-              reachedTop = true;
-              break;
-            default:
-              assert(0 && "Unknown Expr");
-              break;
-          }
-
-          level++;
         }
       }
     }
