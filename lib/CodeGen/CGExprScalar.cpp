@@ -4705,6 +4705,17 @@ VisitAbstractConditionalOperator(const AbstractConditionalOperator *E) {
   if (!RHS)
     return LHS;
 
+  // Checked C
+  // If one side is an mmsafe ptr and the other side is a NULL, then create
+  // a NULL mmsafe ptr for the other side.
+  if (LHS->getType()->isMMSafePointerTy() &&
+      isa<llvm::ConstantPointerNull>(RHS)) {
+    RHS = CGF.CGM.EmitNullMMSafePtr(LHS->getType());
+  } else if (isa<llvm::ConstantPointerNull>(LHS) &&
+             RHS->getType()->isMMSafePointerTy()) {
+    LHS = CGF.CGM.EmitNullMMSafePtr(RHS->getType());
+  }
+
   // Create a PHI node for the real part.
   llvm::PHINode *PN = Builder.CreatePHI(LHS->getType(), 2, "cond");
   PN->addIncoming(LHS, LHSBlock);

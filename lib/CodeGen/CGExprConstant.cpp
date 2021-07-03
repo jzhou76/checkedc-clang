@@ -2195,23 +2195,23 @@ llvm::Constant *CodeGenModule::EmitNullConstant(QualType T) {
 //
 // Checked C
 //
-// This function emits a NULL MMSafe pointer. The raw pointer fields are
+// The next two functions emit a NULL MMSafe pointer. The raw pointer field is
 // initialized to NULL and the key-offset field is initialized to 0.
-// This function is used for global MMSafe pointer initialization.
 //
-llvm::Constant *CodeGenModule::EmitNullMMSafePtr(QualType type) {
+llvm::Constant *CodeGenModule::EmitNullMMSafePtr(QualType T) {
+  assert(T->isCheckedPointerMMSafeType() && "Not an MMSafe Pointer");
+
   llvm::Type *PointeeTy =
-    getTypes().ConvertTypeForMem(type->getPointeeType());
+    getTypes().ConvertTypeForMem(T->getPointeeType());
   llvm::LLVMContext &llvmContext = getLLVMContext();
-  unsigned AS = getContext().getTargetAddressSpace(type);
+  unsigned AS = getContext().getTargetAddressSpace(T);
   // Null pointer for the pointee.
   llvm::ConstantPointerNull *NullPointeePtr =
     llvm::ConstantPointerNull::get(llvm::PointerType::get(PointeeTy, AS));
   // 64-bit 0.
-  llvm::Constant *ZeroConst =
-    llvm::ConstantInt::get(llvm::IntegerType::getInt64Ty(llvmContext), 0);
+  llvm::Constant *ZeroConst = llvm::ConstantInt::get(Int64Ty, 0);
 
-  if (type->isCheckedPointerMMType()) {
+  if (T->isCheckedPointerMMType()) {
     llvm::StructType *MMPtrTy =
       llvm::PointerType::getMMPtr(PointeeTy, llvmContext, AS);
     return llvm::ConstantStruct::get(MMPtrTy, {NullPointeePtr, ZeroConst});
@@ -2223,6 +2223,22 @@ llvm::Constant *CodeGenModule::EmitNullMMSafePtr(QualType type) {
       llvm::PointerType::getMMArrayPtr(PointeeTy, llvmContext, AS);
     return llvm::ConstantStruct::get(MMArrayPtrTy,
                                      {NullPointeePtr, ZeroConst, NullLockPtr});
+  }
+}
+
+llvm::Constant *CodeGenModule::EmitNullMMSafePtr(llvm::Type *T) {
+  assert(T->isMMSafePointerTy() && "Not an MMSafe Pointer Type");
+
+  llvm::ConstantPointerNull *NullPtr =
+    llvm::ConstantPointerNull::get(T->getMMSafePtrInnerPtrTy());
+  llvm::Constant *Zero = llvm::ConstantInt::get(Int64Ty, 0);
+  if (T->isMMPointerTy()) {
+    return llvm::ConstantStruct::get(cast<llvm::StructType>(T), {NullPtr, Zero});
+  } else {
+    llvm::ConstantPointerNull *NullLockPtr =
+      llvm::ConstantPointerNull::get(Int64Ty->getPointerTo());
+    return llvm::ConstantStruct::get(cast<llvm::StructType>(T),
+                                     {NullPtr, Zero, NullLockPtr});
   }
 }
 

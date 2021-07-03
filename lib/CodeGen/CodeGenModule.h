@@ -1049,8 +1049,9 @@ public:
   llvm::Constant *EmitNullConstant(QualType T);
 
   /// Checked C
-  /// Emit a Null MMSafe pointer for global variable initialization.
+  /// Emit a Null MMSafe pointer.
   llvm::Constant *EmitNullMMSafePtr(QualType T);
+  llvm::Constant *EmitNullMMSafePtr(llvm::Type *T);
 
   /// Return a null constant appropriate for zero-initializing a base class with
   /// the given type. This is usually, but not always, an LLVM null constant.
