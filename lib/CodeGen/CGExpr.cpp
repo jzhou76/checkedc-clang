@@ -1717,7 +1717,7 @@ llvm::Value *CodeGenFunction::EmitFromMemory(llvm::Value *Value, QualType Ty) {
 // @Builder: an IR builder from clang::CodeGenFunction.
 //
 // Return:
-//   A ConstantStruct representing an MMSafePtr with @StrGEP as the first field.
+//   A ConstantStruct representing an MMArrayPtr with @StrGEP as the first field.
 //
 static llvm::Value *
 EmitMMArrayPtrForStrConst(llvm::Value *StrGEP, CGBuilderTy &Builder) {
@@ -1725,19 +1725,15 @@ EmitMMArrayPtrForStrConst(llvm::Value *StrGEP, CGBuilderTy &Builder) {
   using StructType = llvm::StructType;
   using Value = llvm::Value;
   llvm::Type *Int64Ty = Builder.getInt64Ty();
-  llvm::Type *Int64PtrTy = Int64Ty->getPointerTo();
 
   // Create an MMArrayPtr constant.
-  StructType *ST = StructType::get(StrGEP->getType(), Int64Ty, Int64PtrTy);
-  Value *LockAddrInt = Builder.CreateSub(Builder.CreatePtrToInt(StrGEP, Int64Ty),
-                                         Builder.getInt64(8));
-  Value *LockAddr = Builder.CreateIntToPtr(LockAddrInt, Int64PtrTy);
-  // The two cast in the constructor should be safe because StrGEP should be an
-  // llvm::GetElementPtrConstantExpr; and LockAddr was constructed by
-  // performing a bit cast and an substraction with a ConstantInt on StrGEP.
+  StructType *ST = StructType::get(StrGEP->getType(), Int64Ty);
+  Value *KeyOffset = Builder.CreateShl(llvm::ConstantInt::get(Int64Ty, 2),
+                                          32, "KeyOffset");
+  // The cast in the constructor should be safe because StrGEP should be an
+  // llvm::GetElementPtrConstantExpr.
   return llvm::ConstantStruct::get(ST, {cast<Constant>(StrGEP),
-                                        llvm::ConstantInt::get(Int64Ty, 2),
-                                        cast<Constant>(LockAddr)});
+                                        cast<Constant>(KeyOffset)});
 }
 
 void CodeGenFunction::EmitStoreOfScalar(llvm::Value *Value, Address Addr,
@@ -1790,15 +1786,16 @@ void CodeGenFunction::EmitStoreOfScalar(llvm::Value *Value, Address Addr,
           && Addr.getElementType()->isMMArrayPointerTy()) {
         // Checked C: Directly assigning an string constant to an MMArrayPtr.
         // Since string constants are stored as private globals, we treat them
-        // as _multiple global variables.
+        // as _checkable global variables.
         //
         // Jie Zhou: The checks in this if statement might be redundant. If
         // the execution reaches to the outside if condition, it should be
         // assigning a string constant to an MMArrayPtr because otherwise
-        // there should be type mismatches errors caught by the type checker.
+        // there should be type mismatch errors caught by the type checker.
+        //
         // TODO: The type checker should forbid assigning a string constant
         // to an MMPtr, while it does not enforce it now.
-        GV->setMultipleQualified(true);
+        GV->setCheckableQualified(true);
         Value = EmitMMArrayPtrForStrConst(Value, Builder);
       }
     }
@@ -3901,10 +3898,10 @@ LValue CodeGenFunction::EmitMemberExpr(const MemberExpr *E,
     EmitDynamicBoundsCheck(Addr, E->getBoundsExpr(), BCK_Normal, nullptr);
 
     // Checked C
-    // When checking the validity of an inner MMSafePtr in a struct,
+    // When checking the validity of an MMSafePtr inside a struct,
     // EmitDynamicKeyCheck() would recursively call EmitMemberExpr().
     // This dynamicKeyCheck flag is used to indicate this situtation to
-    // prevent mutual recursion, otherwise it would end up adding a
+    // prevent incorrect recursion, otherwise it would end up adding a
     // redundant check on the outmost pointer and miss the real check.
     // For example, for "p->p1->num = 10;", without this dynamicKeyCheck,
     // p would be checked twice while p1's check would be missed.

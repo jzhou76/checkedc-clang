@@ -32,7 +32,7 @@ private:
   bool _isMMArrayPtr = false;
   bool _isMMSafePtr = false;
   llvm::Type *originalPointerTy;
-  llvm::Type *rawPointerTy;  // The inner pointer type of a _MM_ptr.
+  llvm::Type *rawPointerTy;  // The inner pointer type of an MMSafe ptr.
 
 public:
   Address(llvm::Value *pointer, CharUnits alignment)
@@ -48,6 +48,8 @@ public:
       // to be the inner raw pointer type. Without this mutation,
       // pointer dereference would fail because the compiler would try to
       // dereference an llvm::StructType.
+      // We fixed type mismatch problems caused by this mutation in the
+      // pass CheckedCHarmonizeTypePass.
       if (pointer->getType()->isMMPointerTy()) {
         _isMMPtr = true;
         rawPointerTy = pointer->getType()->getMMPtrInnerPtrTy();

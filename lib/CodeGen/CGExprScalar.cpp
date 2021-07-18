@@ -36,6 +36,7 @@
 #include "llvm/IR/Intrinsics.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Operator.h"
+#include "llvm/IR/DataLayout.h"
 #include <cstdarg>
 
 using namespace clang;
@@ -213,6 +214,32 @@ static Value *propagateFMFlags(Value *V, const BinOpInfo &Op) {
     I->setFastMathFlags(FMF);
   }
   return V;
+}
+
+//
+// Checked C
+//
+// Function: GetOffsetOfArithExpr().
+// This is a helper function that computes the offset created by a
+// pointer arithmetic.  It is the multiple of the size of the element of
+// an array and the integer operand of the arithemtic expression.
+//
+// Inputs:
+// @V: A pointer to an array.
+// @IntOperand: The integer operand of a pointer arithmetic expression.
+//
+// @return: The computed offset.
+//
+static Value *GetOffsetOfArithExpr(CodeGenFunction &CGF, Value *V,
+                                    Value *IntOperand) {
+  llvm::PointerType *T = dyn_cast<llvm::PointerType>(V->getType());
+  assert(T && "Not a Pointer Type");
+
+  CGBuilderTy &Builder = CGF.Builder;
+  const llvm::DataLayout &DL = CGF.CGM.getDataLayout();
+  Value *ElemSize = Builder.getInt64(DL.getTypeAllocSize(T->getElementType()));
+  IntOperand = Builder.CreateIntCast(IntOperand, Builder.getInt64Ty(), false);
+  return Builder.CreateMul(ElemSize, IntOperand);
 }
 
 class ScalarExprEmitter
@@ -398,8 +425,8 @@ public:
     return Builder.CreateIsNotNull(V, "tobool");
   }
 
-  // Checked C: Emit an mmptr to an _multiple stack/global object.
-  Value *EmitMMSafePtrToMultipleMem(Value *Val, bool isAddrOf=false);
+  // Checked C: Emit an mmsafe ptr to a _checkable stack/global object.
+  Value *EmitMMSafePtrToCheckableObj(Value *Val, bool isAddrOf=false);
 
   //===--------------------------------------------------------------------===//
   //                            Visitor Methods
@@ -623,10 +650,10 @@ public:
       result = result->stripPointerCasts();
     }
 
-    // Emit an MMPtr to an _multiple stack or global object.
+    // Emit an MMPtr to an _checkable stack or global object.
     if (cast<PointerType>(E->getType().getTypePtr())->getPointeeType().
-        isMultipleQualified()) {
-      return EmitMMSafePtrToMultipleMem(result, true);
+        isCheckableQualified()) {
+      return EmitMMSafePtrToCheckableObj(result, true);
     }
 
     if (isa<GetElementPtrInst>(result)) {
@@ -677,8 +704,8 @@ public:
           // Note that we also need to know the pointer is not an array because
           // sometimes it's hard to differentiate an array pointer from just
           // a pointer: ArraySubscriptExpr::getBase() returns an Expr of
-          // PointerType.  For example, for "&p->arr[3]" where arr is of
-          // type Node, after running the getBase() method on the array Expr,
+          // PointerType.  For example, for "&p->arr[3]" where arr is of type
+          // struct Node, after running the getBase() method on the array Expr,
           // it returns an Expr of PointerType "Node *", which is an
           // ImplicitCastExpr. The CastExpr removal loop above should be able to
           // remove the PointerType cast of an array.
@@ -707,8 +734,8 @@ public:
         // of indices, but it usually has one or two.  The example in the doc:
         // https://llvm.org/docs/LangRef.html#getelementptr-instruction
         // has 5 indices but semantically it can be divided to multiple
-        // 2-index GEP.  Now we just assume it has two.
-        // We'll fix it later if this assert is ever triggered.
+        // 2-index GEP.  Now we just assume it has at most two.
+        // We'll fix it later if this assertion is ever triggered.
         assert(GEP->getNumIndices() < 3 &&
             "This GEP of StructType has more than 2 indices.");
 
@@ -724,12 +751,10 @@ public:
           if(isa<StructType>(GEPPtrElemType)) {
             // Compute the offset in the struct.
 
-            // TO-DO: If the first index is not 0, add sizeof(struct) * firstIdx
+            // FIXME: If the first index is not 0, add sizeof(struct) * firstIdx
             // to Offset.
             ConstantInt *firstIdx = cast<ConstantInt>(GEP->getOperand(1));
-            if (!firstIdx->isZero()) {
-              assert(0 && "The first index is not zero.");
-            }
+            assert(firstIdx->isZero() && "The first index is not zero.");
 
             const llvm::StructLayout *SL =
               DL.getStructLayout(cast<StructType>(GEPPtrElemType));
@@ -774,22 +799,6 @@ public:
 
           // Getting the address of an item of an array.
           if (MMSafePtrTy->isMMArrayPointerTy()) {
-            KeyOffsetSrc = Builder.CreateShl(KeyOffsetSrc, 32);
-            Value *LockAddrPtr = Builder.CreateStructGEP(MMSafePtr_Ptr, 2);
-            Value *LockAddr = Builder.CGBuilderBaseTy::CreateLoad(LockAddrPtr);
-            Value *RawPtrPtr = Builder.CreateStructGEP(MMSafePtr_Ptr, 0);
-            Value *RawPtr = Builder.CGBuilderBaseTy::CreateLoad(RawPtrPtr);
-            RawPtr = Builder.CreatePointerCast(RawPtr, LockAddr->getType());
-            llvm::IntegerType *Int64Ty = Builder.getInt64Ty();
-            // Compute the offset: it is the "distance" between the
-            // lock_location and the current raw pointer + the new offset
-            // generated by the array_index * elem_size + offset_of_the_elem
-            // in case the elem is of struct type.
-            Value *ElemOffset =
-              Builder.CreateSub(Builder.CreatePtrToInt(RawPtr, Int64Ty),
-                                Builder.CreatePtrToInt(LockAddr, Int64Ty));
-            ElemOffset = Builder.CreateSub(ElemOffset, ConstantInt::get(Int64Ty, 8));
-            Offset = Builder.CreateAdd(Offset, ElemOffset);
             // Add the new offset introduced by index * sizeof(pointed_elem)
             ConstantInt *ArrayElemSize =
               Builder.getInt64(DL.getTypeAllocSize(GEPPtrElemType));
@@ -1787,7 +1796,7 @@ Value *ScalarExprEmitter::EmitNullValue(QualType Ty) {
   return CGF.EmitFromMemory(CGF.CGM.EmitNullConstant(Ty), Ty);
 }
 
-/// A helper function to compute the offset of a struct field.
+/// Checked C: A helper function to compute the offset of a struct field.
 static inline Value * GetStructElemOffset(llvm::StructType *ST, Value *Index,
                                           const llvm::DataLayout &DL) {
   const llvm::StructLayout *SL = DL.getStructLayout(ST);
@@ -1796,7 +1805,7 @@ static inline Value * GetStructElemOffset(llvm::StructType *ST, Value *Index,
                           (SL->getElementOffset(IdxOfStruct)));
 }
 
-/// A helper function to compute the offset of an item of an array.
+/// Checked C: A helper function to compute the offset of an item of an array.
 static inline Value * GetArrayElemOffset(llvm::ArrayType *AT, Value *Index,
                                          const llvm::DataLayout &DL) {
   uint64_t offset = cast<ConstantInt>(Index)->getZExtValue() *
@@ -1806,11 +1815,11 @@ static inline Value * GetArrayElemOffset(llvm::ArrayType *AT, Value *Index,
 
 //
 // Checked C
-// Emit an MMSafe pointer to an _multiple local or global object.
-// An _multiple object is an object to which pointers may also point to
+// Emit an MMSafe pointer to an _checkable local or global object.
+// An _checkable object is an object to which pointers may also point to
 // a heap object. The motivation of having this special qualifier is to
 // let the compiler generate an mmsafe pointer to such objects so that
-// the mmsafe ptr can be propogated to other mmsafe pointers that may also
+// the mmsafe ptr can be propogated to other mmsafe pointers that may
 // point to the heap.
 //
 // Inputs:
@@ -1820,57 +1829,73 @@ static inline Value * GetArrayElemOffset(llvm::ArrayType *AT, Value *Index,
 //             from an arithmetic expression, including directly using the name
 //             of an array, which is implicitly adding '0'.
 //
-// Return: An MMSafePtr containing @Val and a key (and other metada if needed).
+// Return: An MMSafePtr containing @Val and its corresponding key-offset.
 //
-Value *ScalarExprEmitter::EmitMMSafePtrToMultipleMem(Value *Val, bool isAddrOf) {
+Value *ScalarExprEmitter::EmitMMSafePtrToCheckableObj(Value *Val, bool isAddrOf) {
   using GlobalVariable = llvm::GlobalVariable;
   using StructType = llvm::StructType;
   using ArrayType = llvm::ArrayType;
   using PointerType = llvm::PointerType;
   using GEPOperator = llvm::GEPOperator;
-  llvm::Type *Int64Ty = Builder.getInt64Ty();
+  const llvm::DataLayout &DL = CGF.CGM.getDataLayout();
+  unsigned AS = Val->getType()->getPointerAddressSpace();
+  llvm::LLVMContext &llvmContext = CGF.getLLVMContext();
 
   if (!isAddrOf) {
-    // The Val is from an arithmetic expression of an array.
-    llvm::Type *Int64PtrTy = Int64Ty->getPointerTo();
+    // The Val is an arithmetic expression of an array.
     GEPOperator *GEP = dyn_cast<GEPOperator>(Val);
     assert(GEP && "Not a GEP");
     Value *GEPPtr = GEP->getPointerOperand();
+    if (isa<GEPOperator>(GEPPtr)) {
+      // Do this need to be in a loop?
+      GEPPtr = cast<GEPOperator>(GEPPtr)->getPointerOperand();
+    }
     Value *Key = isa<GlobalVariable>(GEPPtr) ? Builder.getInt64(2)
                                              : Builder.getInt64(1);
-    Value *PtrToInt = Builder.CreatePtrToInt(GEPPtr, Int64Ty);
-    Value *LockAddrInt = Builder.CreateSub(PtrToInt, Builder.getInt64(8));
-    Value *LockAddr = Builder.CreateIntToPtr(LockAddrInt, Int64PtrTy);
-    StructType *ST = StructType::get(Val->getType(), Int64Ty, Int64PtrTy);
-    ST->isMMArrayPtr = true;
-    // Create an mm_array_ptr.
-    Val = Builder.CreateInsertValue(llvm::UndefValue::get(ST), Val, 0);
-    Val = Builder.CreateInsertValue(Val, Key, 1);
-    return Builder.CreateInsertValue(Val, LockAddr, 2);
+    Value *KeyOffset = Builder.CreateShl(Key, 32);
+    Value *Index;
+    switch(GEP->getNumIndices()) {
+      case 1:
+        Index = GEP->getOperand(1);
+        break;
+      case 2:
+        // Does this case ever get triggered?
+        Index = GEP->getOperand(2);
+        break;
+      default:
+        assert(0 && "Unknown GEP Indices");
+        break;
+    }
+
+    KeyOffset = Builder.CreateOr(KeyOffset, GetOffsetOfArithExpr(CGF, GEP, Index));
+    // Create an MMArrayPtr.
+    StructType *MMPtrTy =
+      PointerType::getMMArrayPtr(GEP->getResultElementType(), llvmContext, AS);
+    Val = Builder.CreateInsertValue(llvm::UndefValue::get(MMPtrTy), Val, 0);
+    return Builder.CreateInsertValue(Val, KeyOffset, 1);
   }
 
   // The rest of this function processes an address-of expression.
   bool isStackObj = true;
   Value *Offset = Builder.getInt64(0);
   if (isa<GlobalVariable>(Val)) {
-    // Get the start address of an _multiple stack object. This should
+    // Get the start address of a _checkable stack object. This should
     // be from code like "&global_var".
     isStackObj = false;
   } else if (!isa<llvm::AllocaInst>(Val)) {
     // Get the address of an inner item of a struct or array.
     GEPOperator *GEPO = dyn_cast<GEPOperator>(Val);
-    assert(GEPO && "Unknown Val in EmitMMSafePtrToMultipleMem");
+    assert(GEPO && "Unknown Val in EmitMMSafePtrToCheckableObj()");
 
-    // Start to compute the offset of the inner object.
-    const llvm::DataLayout &DL = CGF.CGM.getDataLayout();
+    // Compute the offset of the inner object.
     Value *GEPPtr= GEPO->getPointerOperand();
     llvm::Type *GEPPtrElemType =
         cast<PointerType>(GEPPtr->getType())->getElementType();
 
     if (isa<GlobalVariable>(GEPPtr)) {
-      // Processing a global _multiple variable.
+      // Processing a global _checkable variable.
       isStackObj = false;
-      // Unlike getting the addressof an inner field of a local struct/array,
+      // Unlike getting the address of an inner field of a local struct/array,
       // for which the GEP usually has only 2 indices, for global struct/array,
       // there could be artitrary number of indices. For example, GNArr is a
       // global array of 10 struct Node which contains an array of struct Data
@@ -1894,7 +1919,7 @@ Value *ScalarExprEmitter::EmitMMSafePtrToMultipleMem(Value *Val, bool isAddrOf) 
         }
       }
     } else {
-      // Processing a local _multiple variable.
+      // Processing a local _checkable variable.
       while (true) {
         // Until now all the GEP that reach here have 2 indices.
         assert(GEPO->getNumIndices() == 2 && "GEP does not have 2 indices");
@@ -1927,8 +1952,8 @@ Value *ScalarExprEmitter::EmitMMSafePtrToMultipleMem(Value *Val, bool isAddrOf) 
   KeyOffset = Builder.CreateShl(KeyOffset, 32);
   KeyOffset = Builder.CreateAdd(KeyOffset, Offset);
   // Create an MMPtr.
-  llvm::StructType *MMPtrTy = llvm::StructType::get(Val->getType(), Int64Ty);
-  MMPtrTy->isMMPtr = true;
+  llvm::Type *PointeeTy = cast<PointerType>(Val->getType())->getElementType();
+  StructType *MMPtrTy = PointerType::getMMPtr(PointeeTy, llvmContext, AS);
   Value *insertPtr = Builder.CreateInsertValue(llvm::UndefValue::get(MMPtrTy),
                                                Val, 0);
   return Builder.CreateInsertValue(insertPtr, KeyOffset, 1);
@@ -2437,15 +2462,15 @@ Value *ScalarExprEmitter::VisitCastExpr(CastExpr *CE) {
         // of code would generate "%struct.node* null" for NULL.
         DstTy = DstTy->getMMSafePtrInnerPtrTy();
       } else if (SrcTy->isMMSafePointerTy()) {
-        // TODO: Casting between MMSafe pointers could be dangerous.
+        // FIXME: Casts between MMSafe pointers could be dangerous.
         // Earlier during compiling we should check to ensure the cast is safe.
         return Builder.CreateMMSafePtrCast(Src, DstTy, Src->getName() + "_cast");
       } else {
         QualType SrcQualTy = E->getType();
         if (DstTy->isMMArrayPointerTy() && SrcQualTy->isPointerType() &&
-            SrcQualTy->getPointeeType().isMultipleQualified()) {
-          // Create an MMArrayPtr from an arith-expr of an _multiple object.
-          return EmitMMSafePtrToMultipleMem(Src);
+            SrcQualTy->getPointeeType().isCheckableQualified()) {
+          // Create an MMArrayPtr from an arith-expr on a _checkable object.
+          return EmitMMSafePtrToCheckableObj(Src);
         }
 
         assert(0 && "Casting improper type to MMSafe pointer.");
@@ -2883,13 +2908,19 @@ ScalarExprEmitter::EmitScalarPrePostIncDec(const UnaryOperator *E, LValue LV,
         // Checked C
         // ++/-- on MMArrayPtr.
         if (value->getType()->isMMArrayPointerTy()) {
-          Value *innerPtr =
+          Value *rawPtr =
             Builder.CreateExtractValue(value, 0, value->getName() + "_innerPtr");
-          Value *updatedInnerPtr =
-            CGF.EmitCheckedInBoundsGEP(innerPtr, amt, isSubtraction,
+          Value *updatedRawPtr =
+            CGF.EmitCheckedInBoundsGEP(rawPtr, amt, isSubtraction,
                                        /*SignedIndices=*/false,
                                        E->getExprLoc(), "incdec.ptr");
-          value = Builder.CreateInsertValue(value, updatedInnerPtr, 0);
+          Value *KeyOffset =
+            Builder.CreateExtractValue(value, 1, value->getName() + "_KeyOffset");
+          Value *ElemSize = GetOffsetOfArithExpr(CGF, rawPtr, Builder.getInt64(1));
+          KeyOffset = isSubtraction ? Builder.CreateSub(KeyOffset, ElemSize) :
+                                      Builder.CreateAdd(KeyOffset, ElemSize);
+          value = Builder.CreateInsertValue(value, updatedRawPtr, 0);
+          value = Builder.CreateInsertValue(value, KeyOffset, 1);
 
         } else {
           value = CGF.EmitCheckedInBoundsGEP(value, amt, /*SignedIndices=*/false,
@@ -3699,17 +3730,16 @@ static Value *emitPointerArithmetic(CodeGenFunction &CGF,
 // Emit pointer addition for _MM_array_ptr.
 //
 // This function extracts the inner raw pointer of the MMArrayPtr and
-// does a normal pointer addition, and creates a new MMArrayPtr with the
-// result from the addition and the key and the lock's address from the
-// source MMArrayPtr.
+// does a normal pointer addition, creates a new MMArrayPtr with the
+// result from the addition, and updates the offset based on the key-offset
+// of the source MMArrayPtr.
 //
 static Value *emitMMArrayPointerAdd(CodeGenFunction &CGF, const BinOpInfo &op) {
   CGBuilderTy &Builder = CGF.Builder;
   Value *LHS = op.LHS, *RHS = op.RHS;
   Value *Ptr = LHS->getType()->isMMArrayPointerTy() ? LHS : RHS;
   Value *Num = LHS->getType()->isMMArrayPointerTy() ? RHS : LHS;
-  Value *rawPtr = Builder.CreateExtractValue(Ptr, 0,
-                                             Ptr->getName() + "_innerPtr");
+  Value *rawPtr = Builder.CreateExtractValue(Ptr, 0, Ptr->getName() + "_innerPtr");
 
   // Create a new BinOpInfo and does a normal pointer arithmetic.
   BinOpInfo rawPtrArithmeticOp = op;
@@ -3717,14 +3747,14 @@ static Value *emitMMArrayPointerAdd(CodeGenFunction &CGF, const BinOpInfo &op) {
   rawPtrArithmeticOp.RHS = Num;
   Value *Add = emitPointerArithmetic(CGF, rawPtrArithmeticOp, false);
 
-  // Extract the key and the address of the lock from the Src MMArrayPtr.
-  Value *key = Builder.CreateExtractValue(Ptr, 1);
-  Value *lockPtr = Builder.CreateExtractValue(Ptr, 2);
+  // Extract the key-offset from the source MMArrayPtr and updates the offset.
+  Value *KeyOffset = Builder.CreateExtractValue(Ptr, 1);
+  KeyOffset = Builder.CreateAdd(KeyOffset, GetOffsetOfArithExpr(CGF, rawPtr, Num));
+
   // Create and return a new MMSafePtr.
   llvm::UndefValue *Dest = llvm::UndefValue::get(Ptr->getType());
   Value *insertNewPtr = Builder.CreateInsertValue(Dest, Add, 0);
-  Value *insertKey = Builder.CreateInsertValue(insertNewPtr, key, 1);
-  return Builder.CreateInsertValue(insertKey, lockPtr, 2);
+  return Builder.CreateInsertValue(insertNewPtr, KeyOffset, 1);
 }
 
 //
@@ -3732,9 +3762,9 @@ static Value *emitMMArrayPointerAdd(CodeGenFunction &CGF, const BinOpInfo &op) {
 // Emit pointer subtraction for _MM_array_ptr.
 //
 // For MMArrayPtr subtracting a number, this function extracts the inner
-// raw pointer and does a normal pointer subtraction, and creates a new
-// MMSafePtr with the result from the subtraction and the key and the lock's
-// address from the source MMSafePtr.
+// raw pointer and does a normal pointer subtraction, creates a new
+// MMArrayPtr with the result from the subtraction, and updates the offset
+// based on the key-offset of the source MMSafePtr.
 // For pointer subtraction between two MMArrayPtr, this function extracts
 // the raw pointers of both sides, does a normal pointer subtraction and
 // return the result.
@@ -3748,20 +3778,23 @@ static Value *emitMMArrayPointerSub(ScalarExprEmitter &SEE,
   Value *LHS = op.LHS, *RHS = op.RHS;
 
   BinOpInfo rawPtrArithmeticOp = op;
-  Value *rawLHS = Builder.CreateExtractValue(LHS, 0,
-                                             LHS->getName() + "_innerPtr");
+  Value *rawLHS = Builder.CreateExtractValue(LHS, 0, LHS->getName() + "_innerPtr");
   Value *rawRHS = RHS;
   if(RHS->getType()->isMMArrayPointerTy()) {
-    rawRHS = Builder.CreateExtractValue(RHS, 0,
-                                       RHS->getName() + "_innerPtr");
+    rawRHS = Builder.CreateExtractValue(RHS, 0, RHS->getName() + "_innerPtr");
+#if 0
     // Check if the LHS and RHS are pointing to the same array;
     // we disallow subtraction between MMArrayPtr to different arrays.
     //
     // Should this be a spatial memory safety check?
+    //
+    // Section 2.5 and Section 2.12 of the Checked C manual talks about
+    // pointer subtraction between pointers to different objects.
     Value *keyLHS = Builder.CreateExtractValue(LHS, 1);
     Value *keyRHS = Builder.CreateExtractValue(RHS, 1);
     CGF.EmitDynamicCheckBlocks(Builder.CreateICmpEQ(keyLHS, keyRHS,
                                "MMArrayPtrSubKeyCheck"));
+#endif
 
     // Key checking passes. Emit a normal subtraction between two pointers.
     rawPtrArithmeticOp.LHS = rawLHS;
@@ -3773,14 +3806,13 @@ static Value *emitMMArrayPointerSub(ScalarExprEmitter &SEE,
   rawPtrArithmeticOp.RHS = rawRHS;
   Value *Sub = emitPointerArithmetic(CGF, rawPtrArithmeticOp, true);
 
-  // Extract the key and the address of the lock from the Src MMArrayPtr.
-  Value *key = Builder.CreateExtractValue(LHS, 1);
-  Value *lockPtr = Builder.CreateExtractValue(LHS, 2);
+  // Extract the key-offset and updates it.
+  Value *KeyOffset = Builder.CreateExtractValue(LHS, 1);
+  KeyOffset = Builder.CreateSub(KeyOffset, GetOffsetOfArithExpr(CGF, rawLHS, rawRHS));
   // Create a new MMSafePtr.
   llvm::UndefValue *Dest = llvm::UndefValue::get(LHS->getType());
   Value *insertNewPtr = Builder.CreateInsertValue(Dest, Sub, 0);
-  Value *insertKey = Builder.CreateInsertValue(insertNewPtr, key, 1);
-  return Builder.CreateInsertValue(insertKey, lockPtr, 2);
+  return Builder.CreateInsertValue(insertNewPtr, KeyOffset, 1);
 }
 
 // Construct an fmuladd intrinsic to represent a fused mul-add of MulOp and
@@ -3856,7 +3888,7 @@ Value *ScalarExprEmitter::EmitAdd(const BinOpInfo &op) {
     return emitPointerArithmetic(CGF, op, CodeGenFunction::NotSubtraction);
 
   // Checked C
-  // Emit an MMArrayPtr add.
+  // Emit an MMArrayPtr addition.
   if (op.LHS->getType()->isMMArrayPointerTy() ||
       op.RHS->getType()->isMMArrayPointerTy()) {
     return emitMMArrayPointerAdd(CGF, op);
@@ -3896,7 +3928,7 @@ Value *ScalarExprEmitter::EmitAdd(const BinOpInfo &op) {
 
 Value *ScalarExprEmitter::EmitSub(const BinOpInfo &op) {
   // Checked C
-  // Emit an MMArrayPtr sub.
+  // Emit an MMArrayPtr subtraction.
   if (op.LHS->getType()->isMMArrayPointerTy()) {
     return emitMMArrayPointerSub(*this, CGF, op);
   }
@@ -4154,9 +4186,9 @@ Value *ScalarExprEmitter::EmitCompare(const BinaryOperator *E,
     Value *RHS = Visit(E->getRHS());
     // Checked C
     // When comparing an MMSafe pointer with NULL or another MMSafe pointer,
-    // extract the inner raw pointer(s) to compare.
+    // extract the inner raw pointer(s) to do a normal pointer comparison.
     // Note we disallow directly comparing an MMSafe pointer with an integer or
-    // a raw C pointer except for NULL. This error is caught at parsing time.
+    // a raw C pointer except for NULL. This error is caught by type checking.
     if (LHS->getType()->isMMSafePointerTy()) {
       LHS = Builder.CreateExtractValue(LHS, 0, LHS->getName() + "_innerPtr");
     }
@@ -4707,7 +4739,7 @@ VisitAbstractConditionalOperator(const AbstractConditionalOperator *E) {
 
   // Checked C
   // If one side is an mmsafe ptr and the other side is a NULL, then create
-  // a NULL mmsafe ptr for the other side.
+  // a NULL mmsafe ptr for NULL.
   if (LHS->getType()->isMMSafePointerTy() &&
       isa<llvm::ConstantPointerNull>(RHS)) {
     RHS = CGF.CGM.EmitNullMMSafePtr(LHS->getType());

@@ -2583,13 +2583,11 @@ void X86_64ABIInfo::classify(QualType Ty, uint64_t OffsetBase,
 
     // Checked C:
     // A raw C pointer is 8-byte long on X86-64 and it only needs to set
-    // the Lo part to be Integer.  _MM_ptr also needs to set the Hi part
-    // for its ID, and _MM_array_ptr has 192-bit and thus it should be
-    // passed by memory. Note we only implemented for X86-64 ABI for now.
-    if (Ty->isCheckedPointerMMType()) {
+    // the Lo part to be Integer.  MMSafePtr need to set both parts
+    // to Integer.
+    // Note we only implemented for X86-64 ABI for now.
+    if (Ty->isCheckedPointerMMSafeType()) {
       Hi = Integer;
-    } else if (Ty->isCheckedPointerMMArrayType()) {
-      Current = Memory;    // Lo = Memory
     }
 
     return;
@@ -2883,8 +2881,7 @@ ABIArgInfo X86_64ABIInfo::getIndirectReturnResult(QualType Ty) const {
   // If this is a scalar LLVM value then assume LLVM will pass it in the right
   // place naturally.
 
-  // Checked C: _MM_array_ptr is returned by memory.
-  if (!isAggregateTypeForABI(Ty) && !Ty->isCheckedPointerMMArrayType()) {
+  if (!isAggregateTypeForABI(Ty)) {
     // Treat an enum type as its underlying type.
     if (const EnumType *EnumTy = Ty->getAs<EnumType>())
       Ty = EnumTy->getDecl()->getIntegerType();

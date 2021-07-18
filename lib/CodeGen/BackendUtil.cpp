@@ -33,7 +33,7 @@
 #include "llvm/IR/Module.h"
 #include "llvm/IR/ModuleSummaryIndex.h"
 #include "llvm/IR/Verifier.h"
-#include "llvm/IR/CheckedCAddLockToMultiple.h"
+#include "llvm/IR/CheckedCAddLockToCheckable.h"
 #include "llvm/IR/CheckedCHarmonizeType.h"
 #include "llvm/LTO/LTOBackend.h"
 #include "llvm/MC/MCAsmInfo.h"
@@ -663,9 +663,9 @@ void EmitAssemblyHelper::CreatePasses(legacy::PassManager &MPM,
   }
 
   // Checked C
-  // Run this pass to create a lock for each _multiple stack & global object.
-  if (CodeGenOpts.CheckedCAddLockToMultiple) {
-    MPM.add(createCheckedCAddLockToMultiplePass());
+  // Run this pass to create a lock for each _checkable stack & global object.
+  if (CodeGenOpts.CheckedCAddLockToCheckable) {
+    MPM.add(createCheckedCAddLockToCheckablePass());
   }
 
   // Checked C

@@ -212,7 +212,7 @@ DeclaratorChunk DeclaratorChunk::getFunction(bool hasProto,
                            MethodQualifiers->getAttributes().size())) {
     auto &attrs = MethodQualifiers->getAttributes();
     I.Fun.MethodQualifiers = new DeclSpec(attrs.getPool().getFactory());
-    MethodQualifiers->forEachCVRUMQualifier(
+    MethodQualifiers->forEachCVRUCQualifier(
         [&](DeclSpec::TQ TypeQual, StringRef PrintName, SourceLocation SL) {
           I.Fun.MethodQualifiers->SetTypeQual(TypeQual, SL);
         });
@@ -418,7 +418,7 @@ bool Declarator::isCtorOrDtor() {
          (getName().getKind() == UnqualifiedIdKind::IK_DestructorName);
 }
 
-void DeclSpec::forEachCVRUMQualifier(
+void DeclSpec::forEachCVRUCQualifier(
     llvm::function_ref<void(TQ, StringRef, SourceLocation)> Handle) {
   if (TypeQualifiers & TQ_const)
     Handle(TQ_const, "const", TQ_constLoc);
@@ -428,14 +428,14 @@ void DeclSpec::forEachCVRUMQualifier(
     Handle(TQ_restrict, "restrict", TQ_restrictLoc);
   if (TypeQualifiers & TQ_unaligned)
     Handle(TQ_unaligned, "unaligned", TQ_unalignedLoc);
-  // Checked C: _multiple
-  if (TypeQualifiers & TQ_multiple)
-    Handle(TQ_multiple, "multiple", TQ_multipleLoc);
+  // Checked C: _checkable
+  if (TypeQualifiers & TQ_checkable)
+    Handle(TQ_checkable, "checkable", TQ_checkableLoc);
 }
 
 void DeclSpec::forEachQualifier(
     llvm::function_ref<void(TQ, StringRef, SourceLocation)> Handle) {
-  forEachCVRUMQualifier(Handle);
+  forEachCVRUCQualifier(Handle);
   // FIXME: Add code below to iterate through the attributes and call Handle.
 }
 
@@ -602,8 +602,8 @@ const char *DeclSpec::getSpecifierName(TQ T) {
   case DeclSpec::TQ_volatile:    return "volatile";
   case DeclSpec::TQ_atomic:      return "_Atomic";
   case DeclSpec::TQ_unaligned:   return "__unaligned";
-  // Checked C: _multiple
-  case DeclSpec::TQ_multiple:    return "_multiple";
+  // Checked C: _checkable
+  case DeclSpec::TQ_checkable:   return "_checkable";
   }
   llvm_unreachable("Unknown typespec!");
 }
@@ -930,7 +930,7 @@ bool DeclSpec::SetTypeQual(TQ T, SourceLocation Loc) {
   case TQ_unaligned: TQ_unalignedLoc = Loc; return false;
   case TQ_atomic:   TQ_atomicLoc = Loc; return false;
   // Checked C
-  case TQ_multiple: TQ_multipleLoc = Loc; return false;
+  case TQ_checkable: TQ_checkableLoc = Loc; return false;
   }
 
   llvm_unreachable("Unknown type qualifier!");
@@ -1135,12 +1135,12 @@ void DeclSpec::Finish(Sema &S, const PrintingPolicy &Policy) {
        TypeSpecSign != TSS_unspecified ||
        TypeAltiVecVector || TypeAltiVecPixel || TypeAltiVecBool ||
        TypeQualifiers)) {
-    const unsigned NumLocs = 10; // Checked C: updated from 9 to 10 for _multiple
+    const unsigned NumLocs = 10; // Checked C: updated from 9 to 10 for _checkable
     SourceLocation ExtraLocs[NumLocs] = {
         TSWRange.getBegin(), TSCLoc,       TSSLoc,
         AltiVecLoc,          TQ_constLoc,  TQ_restrictLoc,
         TQ_volatileLoc,      TQ_atomicLoc, TQ_unalignedLoc,
-        TQ_multipleLoc /*Checked C*/};
+        TQ_checkableLoc /*Checked C*/};
     FixItHint Hints[NumLocs];
     SourceLocation FirstLoc;
     for (unsigned I = 0; I != NumLocs; ++I) {

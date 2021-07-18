@@ -3876,13 +3876,13 @@ RValue CodeGenFunction::EmitCall(const CGFunctionInfo &CallInfo,
       unsigned SRetArgNo = IRFunctionArgs.getSRetArgNo();
       llvm::Value *SRetValuePtr = SRetPtr.getPointer();
       IRCallArgs[SRetArgNo] = SRetValuePtr;
+#if 0
       // Checked C
       // Handle the case when a _MM_array_ptr<T> is returned by a function.
       // In this case, there could be a type mismatch between the concrete
       // type from the caller side and the generic type from the callee side.
       // Here we insert a bitcast instruction to cast the pointer to the
-      // concrete struct type to the generic one.
-      // the generic one as the callee's.
+      // concrete struct type to the generic one as the callee's.
       //
       // (For x86-64 ABI when the return type is a struct over 128 bits,
       // LLVM transforms the function prototype to return void and add
@@ -3898,6 +3898,7 @@ RValue CodeGenFunction::EmitCall(const CGFunctionInfo &CallInfo,
           Builder.CreatePointerCast(SRetValuePtr, IRFuncSRetTy,
                                     SRetValuePtr->getName() + "_generic");
       }
+#endif
     } else if (RetAI.isInAlloca()) {
       Address Addr = createInAllocaStructGEP(RetAI.getInAllocaFieldIndex());
       Builder.CreateStore(SRetPtr.getPointer(), Addr);
@@ -4535,10 +4536,10 @@ RValue CodeGenFunction::EmitCall(const CGFunctionInfo &CallInfo,
           llvm::Value *V = CI;
 
           // Checked C
-          // When a generic function returns a _MM_ptr<T>, there could be
+          // When a generic function returns an mmsafe ptr, there could be
           // a type mismatch between the generic return type {i8*, i64}
-          // and the concrete return type {some_struct*, i64 }.
-          // Here we "cast" the generic return to the concrete one.
+          // and the concrete return type {any_type*, i64 }.
+          // Here we cast the generic return to the concrete one.
           // Since LLVM does not support direct cast between structs,
           // we create and construct a new struct of the concrete type.
           //
@@ -4546,7 +4547,7 @@ RValue CodeGenFunction::EmitCall(const CGFunctionInfo &CallInfo,
           // pointer type; however, this pointer type is implemented as a
           // struct. So it might make more sense to move this piece of code
           // to "case TEK_Aggregate" above.
-          if (V->getType()->isMMPointerTy() && RetIRTy->isMMPointerTy() &&
+          if (V->getType()->isMMSafePointerTy() && RetIRTy->isMMSafePointerTy() &&
               V->getType() != RetIRTy) {
             V = Builder.CreateMMSafePtrCast(V, RetIRTy,
                                             V->getName() + "_concreteRet");

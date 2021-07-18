@@ -1987,11 +1987,11 @@ TypeInfo ASTContext::getTypeInfoImpl(const Type *T) const {
     break;
   case Type::Pointer:
     AS = getTargetAddressSpace(cast<PointerType>(T)->getPointeeType());
+    // Checked C:  MMSafe pointers have different size and memory alignment
+    // than raw C pointers.
     if (T->isCheckedPointerMMSafeType()) {
-      // Checked C:  MMSafe pointers have different size and memory alignment
-      // than raw C pointers.
-      Width = Target->getPointerWidth(AS, T);
-      Align = Target->getPointerAlign(AS, T);
+      Width = Target->getPointerWidth(AS, true);
+      Align = Target->getPointerAlign(AS, true);
     } else {
       Width = Target->getPointerWidth(AS);
       Align = Target->getPointerAlign(AS);
@@ -9652,7 +9652,8 @@ bool ASTContext::isEqualIgnoringChecked(QualType T1, QualType T2) const {
 // specification.
 bool ASTContext::isNotAllowedForNoPrototypeFunction(QualType QT) const {
   if (const PointerType *PT = QT->getAs<PointerType>()) {
-    // Checked C & FIXME: Checked C does not allow the return typf of a
+    // Checked C
+    // FIXME: Checked C does not allow the return type of a
     // no-prototype function to be a spatial memory safe pointer.
     // Currently, for the sake of easy development, we allow MMSafe pointers
     // to be returnd by a no-prototype function. Since the MMSafe pointer

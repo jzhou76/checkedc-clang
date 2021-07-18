@@ -244,8 +244,8 @@ llvm::Constant *CodeGenModule::getOrCreateStaticVarDecl(
       getModule(), LTy, Ty.isConstant(getContext()), Linkage, Init, Name,
       nullptr, llvm::GlobalVariable::NotThreadLocal, TargetAS);
   GV->setAlignment(getContext().getDeclAlign(&D).getQuantity());
-  // Checked C: set the _multiple
-  GV->setMultipleQualified(D.getType().isMultipleQualified());
+  // Checked C: set the _checkable
+  GV->setCheckableQualified(D.getType().isCheckableQualified());
 
   if (supportsCOMDAT() && GV->isWeakForLinker())
     GV->setComdat(TheModule.getOrInsertComdat(GV->getName()));
@@ -1412,10 +1412,10 @@ CodeGenFunction::EmitAutoVarAlloca(const VarDecl &D) {
       // builds.
       address = CreateTempAlloca(allocaTy, allocaAlignment, D.getName(),
                                  /*ArraySize=*/nullptr, &AllocaAddr);
-      // Checked C: set _multiple for a stack variable.
-      // Are there any other places we need set the _multiple for an AllocaInst?
-      cast<llvm::AllocaInst>(address.getPointer())->setMultipleQualified(
-          Ty.isMultipleQualified());
+      // Checked C: set _checkable for a stack variable.
+      // Are there any other places we need set the _checkable for an AllocaInst?
+      cast<llvm::AllocaInst>(address.getPointer())->setCheckableQualified(
+          Ty.isCheckableQualified());
 
       // Don't emit lifetime markers for MSVC catch parameters. The lifetime of
       // the catch parameter starts in the catchpad instruction, and we can't
