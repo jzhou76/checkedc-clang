@@ -7980,9 +7980,9 @@ static bool addrOfExprRetMMSafePtr(Expr *UOExpr) {
         break;
       case Expr::DeclRefExprClass:
         // Reached the top (leftmost) of the Expr.
-        // Getting the address of an _multiple stack/global object should
+        // Getting the address of a _checkable stack/global object should
         // return an mmsafe pointer.
-        return EType.isMultipleQualified() ? true : false;
+        return EType.isCheckableQualified() ? true : false;
       default:
         assert(0 && "Unknown Expr");
         break;
@@ -8134,8 +8134,8 @@ checkPointerTypesForAssignment(Sema &S, QualType LHSType, ExprResult &RHS) {
     }
 #endif
 
-    // Checke if it is assigning an _multiple array to an mm_array_ptr.
-    if (lhkind == CheckedPointerKind::MMArray && rhq.hasMultiple()) {
+    // Checke if it is assigning an _checkable array to an mm_array_ptr.
+    if (lhkind == CheckedPointerKind::MMArray && rhq.hasCheckable()) {
       return Sema::Compatible;
     }
 
@@ -8401,7 +8401,7 @@ Sema::CheckAssignmentConstraints(QualType LHSType, ExprResult &RHS,
   // to a raw pointer.
   //
   // FIXME? Should we allow or disallow 2.?
-  // 2. Disallow assigning the address of an _multiple object to a raw C pointer.
+  // 2. Disallow assigning the address of an _checkable object to a raw C pointer.
   //
   // FIXME: Currently the RHSType of the result of an addres-of expression
   // is always a raw pointer. For example, The type of "&p->i" is "int *" if
@@ -8412,7 +8412,7 @@ Sema::CheckAssignmentConstraints(QualType LHSType, ExprResult &RHS,
   // To fix this issue, we need set the type of the RHS correctly at a much
   // earlier stage.
   // Plus, we would get a similarly confusing error message from assigning the
-  // address of an _multiple object to a raw C pointer.
+  // address of an _checkable object to a raw C pointer.
   if (isa<PointerType>(LHSType.getTypePtr()) &&
       isa<PointerType>(RHSType.getTypePtr())) {
     CheckedPointerKind lhkind = cast<PointerType>(LHSType)->getKind();
@@ -8420,7 +8420,7 @@ Sema::CheckAssignmentConstraints(QualType LHSType, ExprResult &RHS,
 
     if (lhkind == CheckedPointerKind::Unchecked &&
         rhkind == CheckedPointerKind::Unchecked) {
-      if (RHSType->getPointeeType().isMultipleQualified()) {
+      if (RHSType->getPointeeType().isCheckableQualified()) {
         // Again, should we allow or disallow this?
         return Sema::Incompatible;
       }

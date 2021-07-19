@@ -9535,10 +9535,6 @@ def err_illegal_decl_nt_array_ptr_of_nonscalar : Error<
   "only integer and pointer types are allowed">;
 
 // for MMSafe pointer
-def err_illegal_decl_mm_ptr_to_non_struct : Error<
-  "'%0' declared as _MM_ptr to type %1; "
-  "only struct types are allowed">;
-
 def err_illegal_cast_to_mm_ptr : Error<
   "%0 cannot be cast to an MMSafe pointer %1">;
 

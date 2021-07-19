@@ -4170,7 +4170,7 @@ void Sema::MergeVarDeclTypes(VarDecl *New, VarDecl *Old,
   } else {
     // C 6.2.7p2:
     //   All declarations that refer to the same object or function shall have
-    //   compatible type
+    //   compatible type.
     MergedT = Context.mergeTypes(New->getType(), Old->getType());
   }
   if (MergedT.isNull()) {
@@ -12217,7 +12217,7 @@ void Sema::ActOnUninitializedDecl(Decl *RealDecl) {
       else if (B && !B->isInvalid() && !B->isUnknown() && !Ty->isArrayType())
         Diag(Var->getLocation(), diag::err_initializer_expected_with_bounds)
           << Var;
-      else if (Ty->isCheckedPointerMMType())
+      else if (Ty->isCheckedPointerMMType())  // Checked C
         Diag(Var->getLocation(), diag::err_initializer_expected_for_mm_ptr)
           << Var;
       else if (Ty->isCheckedPointerMMArrayType())

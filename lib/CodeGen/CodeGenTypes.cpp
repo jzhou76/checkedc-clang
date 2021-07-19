@@ -549,11 +549,11 @@ llvm::Type *CodeGenTypes::ConvertType(QualType T) {
     unsigned AS = Context.getTargetAddressSpace(ETy);
 
     if (PTy->isCheckedPointerMMType()) {
-      // Checked C: build a _MM_ptr pointer.
+      // Checked C: build an _MM_ptr pointer.
       ResultType = llvm::PointerType::getMMPtr(PointeeType,
                                                getLLVMContext(), AS);
     } else if (PTy->isCheckedPointerMMArrayType()) {
-      // Checked C: build a _MM_array_ptr pointer.
+      // Checked C: build an _MM_array_ptr pointer.
       ResultType = llvm::PointerType::getMMArrayPtr(PointeeType,
                                                     getLLVMContext(), AS);
     } else {

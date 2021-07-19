@@ -20,7 +20,6 @@
 #include "clang/Basic/Specifiers.h"
 #include "clang/Basic/TargetCXXABI.h"
 #include "clang/Basic/TargetOptions.h"
-#include "clang/AST/Type.h"
 #include "llvm/ADT/APInt.h"
 #include "llvm/ADT/IntrusiveRefCntPtr.h"
 #include "llvm/ADT/Optional.h"
@@ -346,30 +345,22 @@ public:
 
   /// Return the width of pointers on this target, for the
   /// specified address space.
-  uint64_t getPointerWidth(unsigned AddrSpace) const {
-    return AddrSpace == 0 ? PointerWidth : getPointerWidthV(AddrSpace);
-  }
-  uint64_t getPointerAlign(unsigned AddrSpace) const {
-    return AddrSpace == 0 ? PointerAlign : getPointerAlignV(AddrSpace);
-  }
+  //
   /// Checked C
-  /// MM pointers are fat pointers; so their lengths are greater than
-  /// PointerWdith and their alignments are greater than PointerAlign.
+  /// MMSafe pointers are fat pointers; so their lengths are greater than
+  /// PointerWidth and their alignments are greater than PointerAlign.
   ///
-  /// FIXME: Currently we only implement for the x86-64 architecture;
-  /// so we fix the width and alginment of MM pointers to 16 bytes
-  /// and 16 bytes for struct, and 24 bytes and 32 bytes for arrays.
+  /// TODO: Currently we only implement for the x86-64 architecture;
+  /// so the width and alginment of MM pointers are 16 bytes.
   /// Later if we want to support more architectures we need change
   /// this function.
-  ///
-  uint64_t getPointerWidth(unsigned AddrSpace, const clang::Type *T) const {
-    /// The magic number 64 means the lenght of the key of a MMSafe pointer.
-    return T->isCheckedPointerMMType() ? PointerWidth + 64 :
-                                         PointerWidth * 2 + 64;
+  uint64_t getPointerWidth(unsigned AddrSpace, bool isMMSafePtr=false) const {
+    return AddrSpace == 0 ? (isMMSafePtr ? PointerWidth + 64 : PointerWidth) :
+                            getPointerWidthV(AddrSpace);
   }
-  uint64_t getPointerAlign(unsigned AddrSpace, const clang::Type *T) const {
-    return T->isCheckedPointerMMType() ? PointerAlign * 2 :
-                                         PointerAlign * 4;
+  uint64_t getPointerAlign(unsigned AddrSpace, bool isMMSafePtr=false) const {
+    return AddrSpace == 0 ? (isMMSafePtr ? PointerAlign * 2 : PointerAlign) :
+                            getPointerAlignV(AddrSpace);
   }
 
   /// Return the maximum width of pointers on this target.

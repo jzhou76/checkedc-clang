@@ -1405,7 +1405,7 @@ public:
 
   QualType BuildQualifiedType(QualType T, SourceLocation Loc, Qualifiers Qs,
                               const DeclSpec *DS = nullptr);
-  QualType BuildQualifiedType(QualType T, SourceLocation Loc, unsigned CVRAM,
+  QualType BuildQualifiedType(QualType T, SourceLocation Loc, unsigned CVRAC,
                               const DeclSpec *DS = nullptr); // Updated for Checked C
   QualType BuildPointerType(QualType T, CheckedPointerKind kind,
                             SourceLocation Loc, DeclarationName Entity);

@@ -3909,9 +3909,9 @@ void Parser::ParseDeclarationSpecifiers(DeclSpec &DS,
                                  getLangOpts());
       break;
 
-    // Checked C: _multiple
-    case tok::kw__multiple:
-      isInvalid = DS.SetTypeQual(DeclSpec::TQ_multiple, Loc, PrevSpec, DiagID,
+    // Checked C: _checkable
+    case tok::kw__checkable:
+      isInvalid = DS.SetTypeQual(DeclSpec::TQ_checkable, Loc, PrevSpec, DiagID,
                                  getLangOpts());
       break;
 
@@ -5034,7 +5034,7 @@ bool Parser::isTypeSpecifierQualifier() {
   case tok::kw_volatile:
   case tok::kw_restrict:
   case tok::kw__Sat:
-  case tok::kw__multiple:  // Checked C
+  case tok::kw__checkable:  // Checked C
 
     // Debugger support.
   case tok::kw___unknown_anytype:
@@ -5201,7 +5201,7 @@ bool Parser::isDeclarationSpecifier(bool DisambiguatingWithExpression) {
   case tok::kw_volatile:
   case tok::kw_restrict:
   case tok::kw__Sat:
-  case tok::kw__multiple:  // Checked C
+  case tok::kw__checkable:  // Checked C
 
     // function-specifier
   case tok::kw_inline:
@@ -5486,8 +5486,8 @@ void Parser::ParseTypeQualifierListOpt(
                                  getLangOpts());
       break;
     // Checked C
-    case tok::kw__multiple:
-      isInvalid = DS.SetTypeQual(DeclSpec::TQ_multiple, Loc, PrevSpec, DiagID,
+    case tok::kw__checkable:
+      isInvalid = DS.SetTypeQual(DeclSpec::TQ_checkable, Loc, PrevSpec, DiagID,
                                  getLangOpts());
 
     // OpenCL qualifiers:
